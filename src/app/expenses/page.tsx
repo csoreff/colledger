@@ -1,0 +1,160 @@
+import Link from "next/link";
+import { prisma } from "@/lib/prisma";
+import { deleteExpense } from "@/lib/actions";
+import { formatCents } from "@/lib/money";
+import { formatDate } from "@/lib/dates";
+import { EXPENSE_CATEGORY_LABELS } from "@/lib/labels";
+import { PageHeader, StatCard } from "@/components/ui";
+import { DeleteButton } from "@/components/DeleteButton";
+import { ExpenseForm } from "@/components/ExpenseForm";
+
+export const dynamic = "force-dynamic";
+
+type SearchParams = { scope?: string };
+
+export default async function ExpensesPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  const scope = searchParams.scope === "item" ? "item" : searchParams.scope === "all" ? "all" : "general";
+
+  const where =
+    scope === "general" ? { itemId: null } : scope === "item" ? { NOT: { itemId: null } } : {};
+
+  const [expenses, generalAgg, itemAgg] = await Promise.all([
+    prisma.expense.findMany({
+      where,
+      orderBy: { incurredAt: "desc" },
+      include: { item: { select: { id: true, title: true } } },
+    }),
+    prisma.expense.aggregate({ where: { itemId: null }, _sum: { amountCents: true } }),
+    prisma.expense.aggregate({ where: { NOT: { itemId: null } }, _sum: { amountCents: true } }),
+  ]);
+
+  const generalTotal = generalAgg._sum.amountCents ?? 0;
+  const itemTotal = itemAgg._sum.amountCents ?? 0;
+  const shownTotal = expenses.reduce((sum, e) => sum + e.amountCents, 0);
+
+  const TABS = [
+    { key: "general", label: "General only" },
+    { key: "item", label: "Item-specific" },
+    { key: "all", label: "All" },
+  ] as const;
+
+  return (
+    <>
+      <PageHeader
+        title="Expenses"
+        subtitle="General overhead lives here. Item-specific costs are added on each item's page."
+      />
+
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatCard
+          label="General expenses"
+          value={formatCents(generalTotal)}
+          hint="Not tied to any one item"
+        />
+        <StatCard
+          label="Item expenses"
+          value={formatCents(itemTotal)}
+          hint="Rolled into each item's cost basis"
+        />
+        <StatCard label="All expenses" value={formatCents(generalTotal + itemTotal)} />
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-1">
+        {TABS.map((tab) => (
+          <Link
+            key={tab.key}
+            href={`/expenses?scope=${tab.key}`}
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
+              scope === tab.key
+                ? "bg-emerald-500/10 text-emerald-300"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            }`}
+          >
+            {tab.label}
+          </Link>
+        ))}
+      </div>
+
+      <section className="card mb-6 p-0">
+        {expenses.length === 0 ? (
+          <p className="p-6 text-sm text-slate-500">No expenses in this view yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px]">
+              <thead className="border-b border-slate-800">
+                <tr>
+                  <th className="th">Date</th>
+                  <th className="th">Category</th>
+                  <th className="th">Description</th>
+                  <th className="th">Applies to</th>
+                  <th className="th">Vendor</th>
+                  <th className="th text-right">Amount</th>
+                  <th className="th" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/70">
+                {expenses.map((expense) => (
+                  <tr key={expense.id} className="hover:bg-slate-800/30">
+                    <td className="td text-slate-400">{formatDate(expense.incurredAt)}</td>
+                    <td className="td">{EXPENSE_CATEGORY_LABELS[expense.category]}</td>
+                    <td className="td">{expense.description}</td>
+                    <td className="td">
+                      {expense.item ? (
+                        <Link
+                          href={`/items/${expense.item.id}`}
+                          className="text-slate-300 hover:text-emerald-400"
+                        >
+                          {expense.item.title}
+                        </Link>
+                      ) : (
+                        <span className="text-slate-500">General</span>
+                      )}
+                    </td>
+                    <td className="td text-slate-400">{expense.vendor ?? "—"}</td>
+                    <td className="td text-right tabular-nums">
+                      {formatCents(expense.amountCents)}
+                    </td>
+                    <td className="td text-right">
+                      <DeleteButton
+                        action={deleteExpense.bind(null, expense.id)}
+                        label="Delete expense"
+                        confirmMessage="Delete this expense?"
+                        iconOnly
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t border-slate-800">
+                <tr>
+                  <td className="td font-medium" colSpan={5}>
+                    Total shown
+                  </td>
+                  <td className="td text-right font-medium tabular-nums">
+                    {formatCents(shownTotal)}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section className="card">
+        <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-400">
+          Add a general expense
+        </h2>
+        <p className="mb-4 text-sm text-slate-500">
+          Supplies, subscriptions, table fees, mileage — anything that isn&apos;t attributable
+          to a single card or volume.
+        </p>
+        <ExpenseForm defaultCategory="SUPPLIES" />
+      </section>
+    </>
+  );
+}

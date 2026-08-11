@@ -1,0 +1,252 @@
+// Collectors Ledger — trading card & manga purchase/sale/expense tracking
+//
+// MONEY: every monetary value is stored as an integer number of cents.
+// This avoids float rounding drift and Prisma Decimal serialization headaches
+// across the server/client boundary. Format with `src/lib/money.ts`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ItemType {
+  CARD
+  MANGA
+}
+
+enum ItemStatus {
+  OWNED
+  LISTED
+  SOLD
+  RETURNED
+  LOST
+}
+
+/// Grading company. RAW means ungraded.
+enum Grader {
+  RAW
+  PSA
+  BGS
+  CGC
+  SGC
+  TAG
+  ACE
+  OTHER
+}
+
+enum ExpenseCategory {
+  SHIPPING_IN
+  SHIPPING_OUT
+  GRADING
+  SUPPLIES
+  PLATFORM_FEE
+  TAX
+  TRAVEL
+  SUBSCRIPTION
+  STORAGE
+  AUTHENTICATION
+  OTHER
+}
+
+enum Marketplace {
+  EBAY
+  TCGPLAYER
+  WHATNOT
+  MERCARI
+  AMAZON
+  FACEBOOK
+  LOCAL
+  SHOW
+  OTHER
+}
+
+model Item {
+  id String @id @default(cuid())
+
+  type  ItemType
+  title String
+
+  /// Card set name, or manga series name.
+  setName String?
+  /// Card number, or manga volume number.
+  number  String?
+  /// Printing / variant / edition (e.g. "1st Edition", "Reverse Holo", "Omnibus").
+  variant String?
+  /// e.g. "English", "Japanese".
+  language String @default("English")
+
+  // --- Grading ---
+  grader     Grader  @default(RAW)
+  /// Numeric or letter grade as printed on the slab, e.g. "10", "9.5", "A+".
+  grade      String?
+  certNumber String?
+  /// Raw condition when ungraded, e.g. "NM", "LP", "Like New".
+  condition  String?
+
+  quantity Int @default(1)
+
+  // --- Acquisition ---
+  acquiredAt         DateTime
+  purchasePriceCents Int
+  purchaseSource     Marketplace @default(OTHER)
+  purchaseNotes      String?
+
+  status   ItemStatus @default(OWNED)
+  imageUrl String?
+  notes    String?
+
+  /// Saved search string used when pulling eBay sold comps for this item.
+  compQuery String?
+
+  expenses Expense[]
+  sales    Sale[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([status])
+  @@index([acquiredAt])
+}
+
+/// An expense. When `itemId` is null it is a GENERAL expense — overhead that
+/// is not attributable to any single item (supplies, subscriptions, travel).
+/// One item may have many expenses.
+model Expense {
+  id String @id @default(cuid())
+
+  itemId String?
+  item   Item?   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  category    ExpenseCategory
+  description String
+  amountCents Int
+  incurredAt  DateTime
+  vendor      String?
+  notes       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([itemId])
+  @@index([category])
+  @@index([incurredAt])
+}
+
+/// A sale of an item. Items may be sold across multiple transactions when
+/// quantity > 1, so this is a list rather than a one-to-one.
+model Sale {
+  id String @id @default(cuid())
+
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  soldAt   DateTime
+  platform Marketplace @default(EBAY)
+  quantity Int         @default(1)
+
+  /// What the buyer paid for the item itself (the true accepted price if this
+  /// was a Best Offer — not the original asking price).
+  grossPriceCents        Int
+  /// Shipping charged to the buyer (revenue).
+  shippingCollectedCents Int @default(0)
+  /// Marketplace + payment processing fees.
+  platformFeeCents       Int @default(0)
+  /// Postage/packaging actually paid (cost).
+  shippingCostCents      Int @default(0)
+  otherFeeCents          Int @default(0)
+
+  /// True when the sale closed via an accepted Best Offer.
+  wasBestOffer Boolean @default(false)
+  /// Original asking price, kept for reference when wasBestOffer is true.
+  listedPriceCents Int?
+
+  buyer String?
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([itemId])
+  @@index([soldAt])
+}
+
+// ---------------------------------------------------------------------------
+// eBay sold-comp lookup
+// ---------------------------------------------------------------------------
+
+/// A cached comp search. Results are stored so repeat lookups don't re-hit the
+/// upstream provider, and so manually-corrected prices survive.
+model CompSearch {
+  id String @id @default(cuid())
+
+  /// Normalized cache key: query + filters.
+  cacheKey String @unique
+
+  query     String
+  itemType  ItemType?
+  /// null = any, RAW = ungraded only, otherwise that grading company only.
+  grader    Grader?
+  grade     String?
+
+  provider      String
+  fetchedAt     DateTime @default(now())
+  resultCount   Int      @default(0)
+  /// Provider-reported problem, surfaced in the UI rather than thrown away.
+  warning       String?
+
+  comps SoldComp[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([query])
+}
+
+/// A single sold listing pulled from a comp provider.
+model SoldComp {
+  id String @id @default(cuid())
+
+  searchId String
+  search   CompSearch @relation(fields: [searchId], references: [id], onDelete: Cascade)
+
+  /// Provider's id for the listing, used to dedupe within a search.
+  externalId String?
+  title      String
+  url        String?
+  imageUrl   String?
+  soldAt     DateTime?
+
+  /// The price we believe the buyer actually paid, in cents.
+  salePriceCents Int
+  /// The original asking price when different from the sale price.
+  listedPriceCents Int?
+  shippingCents    Int?
+  currency         String @default("USD")
+
+  /// The listing closed via an accepted Best Offer.
+  wasBestOffer Boolean @default(false)
+  /// TRUE when salePriceCents is the real accepted offer amount.
+  /// FALSE on a Best Offer listing whose true price the provider could not
+  /// resolve — salePriceCents is then only the asking price (an upper bound).
+  priceIsConfirmed Boolean @default(true)
+
+  /// A price the user typed in to correct/fill an unresolved Best Offer.
+  /// Takes precedence over salePriceCents everywhere in the UI.
+  manualPriceCents Int?
+
+  grader    Grader?
+  grade     String?
+  condition String?
+
+  provider String
+
+  createdAt DateTime @default(now())
+
+  @@index([searchId])
+  @@index([soldAt])
+}
