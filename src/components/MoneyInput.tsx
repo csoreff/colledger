@@ -15,6 +15,8 @@ type FxState = {
   jpyPerUsd: number | null;
   effectiveDate: string | null;
   isFallback: boolean;
+  /** Days between the rate's date and the one asked for. */
+  distanceDays: number;
   loading: boolean;
   error: string | null;
 };
@@ -23,6 +25,7 @@ const FxContext = createContext<FxState>({
   jpyPerUsd: null,
   effectiveDate: null,
   isFallback: false,
+  distanceDays: 0,
   loading: false,
   error: null,
 });
@@ -42,6 +45,7 @@ export function FxRateProvider({
     jpyPerUsd: null,
     effectiveDate: null,
     isFallback: false,
+    distanceDays: 0,
     loading: true,
     error: null,
   });
@@ -56,7 +60,7 @@ export function FxRateProvider({
         if (cancelled) return;
         if (!res.ok) {
           setState({
-            jpyPerUsd: null, effectiveDate: null, isFallback: false,
+            jpyPerUsd: null, effectiveDate: null, isFallback: false, distanceDays: 0,
             loading: false, error: body?.error ?? "Could not load an exchange rate.",
           });
           return;
@@ -65,6 +69,7 @@ export function FxRateProvider({
           jpyPerUsd: body.jpyPerUsd,
           effectiveDate: body.effectiveDate,
           isFallback: Boolean(body.isFallback),
+          distanceDays: Number(body.distanceDays ?? 0),
           loading: false,
           error: null,
         });
@@ -72,7 +77,7 @@ export function FxRateProvider({
       .catch(() => {
         if (!cancelled) {
           setState({
-            jpyPerUsd: null, effectiveDate: null, isFallback: false,
+            jpyPerUsd: null, effectiveDate: null, isFallback: false, distanceDays: 0,
             loading: false, error: "Could not load an exchange rate.",
           });
         }
@@ -104,15 +109,21 @@ export function FxRateNotice({ date }: { date: string }) {
   }
   if (!fx.jpyPerUsd) return null;
 
+  // A weekend roll-back is a day or two and unremarkable. A substitute from
+  // weeks or years away is a number you should not silently trust.
+  const isDistant = fx.distanceDays > 7;
+
   return (
-    <p className="text-xs text-slate-500">
-      Converting at <span className="text-slate-300">{formatRate(fx.jpyPerUsd)}</span>
+    <p className={`text-xs ${isDistant ? "text-amber-300" : "text-slate-500"}`}>
+      Converting at <span className={isDistant ? "" : "text-slate-300"}>{formatRate(fx.jpyPerUsd)}</span>
       {fx.isFallback ? (
-        <span className="text-amber-300">
+        <>
           {" "}
-          — no rate published for {date}, using the latest available
-          {fx.effectiveDate ? ` (${fx.effectiveDate})` : ""}
-        </span>
+          — no rate is published for {date}
+          {fx.effectiveDate ? `, so this is from ${fx.effectiveDate}` : ""}
+          {fx.distanceDays > 1 ? ` (${fx.distanceDays} days away)` : ""}.
+          {isDistant ? " That's too far off to trust — enter both amounts by hand." : ""}
+        </>
       ) : fx.effectiveDate && fx.effectiveDate !== date ? (
         <span> — markets were shut on {date}, using {fx.effectiveDate}</span>
       ) : null}

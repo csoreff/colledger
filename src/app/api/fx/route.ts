@@ -18,6 +18,7 @@ export async function GET(request: Request) {
       jpyPerUsd: rate.jpyPerUsd,
       effectiveDate: toDateInputValue(rate.effectiveDate),
       isFallback: rate.isFallback,
+      distanceDays: rate.distanceDays,
     });
   } catch (error) {
     const message =

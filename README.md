@@ -83,11 +83,22 @@ Three behaviours worth knowing, all verified against the live API:
 - **Weekends and holidays** have no published rate, so the previous business day
   is used and the form says so ("markets were shut on 2026-03-01, using
   2026-02-27").
-- **Future dates and anything before 1999** fall outside the series entirely.
-  The latest available rate is substituted and flagged.
-- **If the service is unreachable**, the nearest cached rate is used rather than
-  blocking the save. With no cache at all, you're told to enter both amounts by
-  hand — which always works.
+- **Outside the series** (before 1999-01-04, or a future date) the rate clamps to
+  the *nearer* end — the 1999 opening rate for an old date, the latest
+  publication for a future one. Never unconditionally "today".
+- **Transient upstream errors are not treated as "no rate exists."** A 5xx or a
+  network blip is retried, then falls back to the nearest *cached* rate by date.
+  Conflating the two is how a 2020 purchase ends up priced at today's rate.
+- **With no usable cache**, you're told to enter both amounts by hand — which
+  always works.
+
+Every substitution reports how many days away the rate came from. A one-day
+weekend roll-back is shown quietly; anything beyond a week is highlighted and
+tells you to enter both amounts yourself.
+
+`npm run fx:audit` lists any stored record whose rate came from a date far from
+its own transaction date; `npm run fx:repair` recomputes the derived currency
+side at the correct rate, leaving the currency the record settled in untouched.
 
 ## Sold comps, and the Best Offer problem
 

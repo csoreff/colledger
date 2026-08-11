@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed": "tsx prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts",
+    "fx:audit": "tsx scripts/repair-fx.ts",
+    "fx:repair": "tsx scripts/repair-fx.ts --apply"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
