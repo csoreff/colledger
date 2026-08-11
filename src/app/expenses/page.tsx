@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { deleteExpense } from "@/lib/actions";
-import { formatCents } from "@/lib/money";
+import type { Money } from "@/lib/currency";
 import { formatDate } from "@/lib/dates";
 import { EXPENSE_CATEGORY_LABELS } from "@/lib/labels";
+import { expenseMoney } from "@/lib/profit";
 import { PageHeader, StatCard } from "@/components/ui";
+import { MoneyValue } from "@/components/Money";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ExpenseForm } from "@/components/ExpenseForm";
 
@@ -28,13 +30,31 @@ export default async function ExpensesPage({
       orderBy: { incurredAt: "desc" },
       include: { item: { select: { id: true, title: true } } },
     }),
-    prisma.expense.aggregate({ where: { itemId: null }, _sum: { amountCents: true } }),
-    prisma.expense.aggregate({ where: { NOT: { itemId: null } }, _sum: { amountCents: true } }),
+    prisma.expense.aggregate({
+      where: { itemId: null },
+      _sum: { amountUsdCents: true, amountJpyYen: true },
+    }),
+    prisma.expense.aggregate({
+      where: { NOT: { itemId: null } },
+      _sum: { amountUsdCents: true, amountJpyYen: true },
+    }),
   ]);
 
-  const generalTotal = generalAgg._sum.amountCents ?? 0;
-  const itemTotal = itemAgg._sum.amountCents ?? 0;
-  const shownTotal = expenses.reduce((sum, e) => sum + e.amountCents, 0);
+  const generalTotal: Money = {
+    usdCents: generalAgg._sum.amountUsdCents ?? 0,
+    jpyYen: generalAgg._sum.amountJpyYen ?? 0,
+  };
+  const itemTotal: Money = {
+    usdCents: itemAgg._sum.amountUsdCents ?? 0,
+    jpyYen: itemAgg._sum.amountJpyYen ?? 0,
+  };
+  const shownTotal: Money = expenses.reduce(
+    (sum, e) => ({
+      usdCents: sum.usdCents + e.amountUsdCents,
+      jpyYen: sum.jpyYen + e.amountJpyYen,
+    }),
+    { usdCents: 0, jpyYen: 0 },
+  );
 
   const TABS = [
     { key: "general", label: "General only" },
@@ -52,15 +72,26 @@ export default async function ExpensesPage({
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard
           label="General expenses"
-          value={formatCents(generalTotal)}
+          value={<MoneyValue money={generalTotal} align="left" />}
           hint="Not tied to any one item"
         />
         <StatCard
           label="Item expenses"
-          value={formatCents(itemTotal)}
+          value={<MoneyValue money={itemTotal} align="left" />}
           hint="Rolled into each item's cost basis"
         />
-        <StatCard label="All expenses" value={formatCents(generalTotal + itemTotal)} />
+        <StatCard
+          label="All expenses"
+          value={
+            <MoneyValue
+              money={{
+                usdCents: generalTotal.usdCents + itemTotal.usdCents,
+                jpyYen: generalTotal.jpyYen + itemTotal.jpyYen,
+              }}
+              align="left"
+            />
+          }
+        />
       </div>
 
       <div className="mb-4 flex flex-wrap gap-1">
@@ -115,8 +146,8 @@ export default async function ExpensesPage({
                       )}
                     </td>
                     <td className="td text-slate-400">{expense.vendor ?? "—"}</td>
-                    <td className="td text-right tabular-nums">
-                      {formatCents(expense.amountCents)}
+                    <td className="td text-right">
+                      <MoneyValue money={expenseMoney(expense)} primary={expense.currency} />
                     </td>
                     <td className="td text-right">
                       <DeleteButton
@@ -134,8 +165,8 @@ export default async function ExpensesPage({
                   <td className="td font-medium" colSpan={5}>
                     Total shown
                   </td>
-                  <td className="td text-right font-medium tabular-nums">
-                    {formatCents(shownTotal)}
+                  <td className="td text-right font-medium">
+                    <MoneyValue money={shownTotal} />
                   </td>
                   <td />
                 </tr>

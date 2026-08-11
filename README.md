@@ -20,9 +20,15 @@ run it once to look around, then wipe it and enter your own.
 
 ## What it tracks
 
-**Items** — a card or a manga volume. Graded (PSA/BGS/CGC/SGC/TAG/ACE, with grade
-and cert number) or raw with a free-text condition. Cards get set + card number;
-manga gets series + volume. Same model, relabelled per type.
+**Items** — a card or a manga volume. Graded (PSA/BGS/CGC/SGC/TAG/ACE/ARS, with
+grade and cert number) or raw with a free-text condition. Cards get set + card
+number; manga gets series + volume. Same model, relabelled per type. ARS is the
+one grader whose scale runs to **10+**; the form shows each grader's ceiling.
+
+**Where you bought and sold** — eBay, SNKRDUNK, PayPay Flea Market / Yahoo Flea,
+Yahoo Auctions, Mercari, TCGplayer, Whatnot, Amazon, Facebook, local, and shows.
+The collection list filters by source. Picking a Japanese marketplace defaults
+the currency to yen.
 
 **Expenses** — an item can have as many as you like: grading, inbound shipping,
 sleeves, whatever. Each one rolls into that item's cost basis. Expenses with no
@@ -43,8 +49,45 @@ item profit   = net proceeds − cost basis
 net profit    = Σ item profit − general expenses
 ```
 
-Money is stored as integer cents throughout, so nothing drifts. Amounts are
-parsed leniently on input (`$1,234.56` is fine).
+Every one of those is computed in USD and JPY at once — see below.
+
+## Dual currency (USD + JPY)
+
+Every amount is held twice: **USD in cents and JPY in whole yen**. Yen has no
+subunit, so it is never scaled by 100. Both are integers, so nothing drifts.
+
+Each record also stores **the currency it actually settled in and the FX rate on
+its own transaction date**. That matters more than it sounds: a card bought on
+Yahoo Auctions in yen and sold on eBay in dollars is converted at two different
+rates, so the yen profit and the dollar profit are genuinely different numbers,
+and each is correct in its own currency. The dashboard reports ROI separately
+for exactly this reason.
+
+Because both sides are stored rather than converted on read, a figure stays at
+its historical value however rates move afterwards.
+
+### Entering amounts
+
+Every price field is a **pair of boxes, one USD and one JPY**. Type in either and
+the other fills at the rate for that record's date; the form shows which rate it
+used. Whichever pair is on screen is what gets saved — so when a marketplace
+gives you its own conversion (usually with a spread), type both in and your
+figures are kept as-is rather than overwritten with the mid-market rate.
+
+### Where the rates come from
+
+Historical ECB rates via [frankfurter.dev](https://frankfurter.dev) — free, no
+API key. Each requested date is fetched once and cached in the `FxRate` table.
+Three behaviours worth knowing, all verified against the live API:
+
+- **Weekends and holidays** have no published rate, so the previous business day
+  is used and the form says so ("markets were shut on 2026-03-01, using
+  2026-02-27").
+- **Future dates and anything before 1999** fall outside the series entirely.
+  The latest available rate is substituted and flagged.
+- **If the service is unreachable**, the nearest cached rate is used rather than
+  blocking the save. With no cache at all, you're told to enter both amounts by
+  hand — which always works.
 
 ## Sold comps, and the Best Offer problem
 
@@ -103,9 +146,10 @@ overwritten by a refresh.
 ## Layout
 
 ```
-prisma/schema.prisma        data model (money = integer cents)
-src/lib/profit.ts           cost basis, net proceeds, profit, ROI
-src/lib/money.ts            parsing + formatting
+prisma/schema.prisma        data model (every amount stored in USD cents + JPY yen)
+src/lib/profit.ts           cost basis, net proceeds, profit, ROI (both currencies)
+src/lib/currency.ts         the USD/JPY Money pair: conversion, parsing, formatting
+src/lib/fx.ts               historical rate lookup + caching + fallbacks
 src/lib/comps/              provider interface, eBay API client, caching, stats
 src/lib/actions.ts          server actions (create/update/delete)
 src/app/                    dashboard, items, expenses, comps
@@ -113,8 +157,10 @@ src/app/                    dashboard, items, expenses, comps
 
 ## Verified
 
-Build and typecheck pass. Financial math checked by hand against seeded data;
-unit assertions cover profit, money parsing, comp stats and grade inference;
-a Playwright pass drives every form in a real browser — item creation, item
-expense, a Best Offer sale, validation errors, general expenses, and manual comp
-entry — with no console errors.
+Build and typecheck pass. Financial math checked by hand against seeded data.
+Unit assertions cover profit, cross-currency conversion, comp stats, and grade
+inference (including ARS 10+ and CGC 9.8). FX caching, weekend roll-back,
+out-of-range fallback and offline behaviour are tested against the live API.
+Playwright drives every form in a real browser — a yen purchase on Yahoo
+Auctions auto-converting to USD, a USD sale with a Best Offer, a yen expense,
+validation errors, and manual comp entry — with no console errors.

@@ -68,15 +68,29 @@ export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
 
 export const MARKETPLACE_LABELS: Record<Marketplace, string> = {
   EBAY: "eBay",
+  SNKRDUNK: "SNKRDUNK",
+  PAYPAY_FLEA: "PayPay Flea Market / Yahoo Flea",
+  YAHOO_AUCTIONS: "Yahoo Auctions",
+  MERCARI: "Mercari",
   TCGPLAYER: "TCGplayer",
   WHATNOT: "Whatnot",
-  MERCARI: "Mercari",
   AMAZON: "Amazon",
   FACEBOOK: "Facebook",
   LOCAL: "Local / in person",
   SHOW: "Show / convention",
   OTHER: "Other",
 };
+
+/// Marketplaces that settle in yen, used to pick the default currency.
+export const JPY_MARKETPLACES: Marketplace[] = [
+  "SNKRDUNK",
+  "PAYPAY_FLEA",
+  "YAHOO_AUCTIONS",
+];
+
+export function defaultCurrencyFor(marketplace: Marketplace): "USD" | "JPY" {
+  return JPY_MARKETPLACES.includes(marketplace) ? "JPY" : "USD";
+}
 
 export const ITEM_TYPES = Object.keys(ITEM_TYPE_LABELS) as ItemType[];
 export const ITEM_STATUSES = Object.keys(ITEM_STATUS_LABELS) as ItemStatus[];

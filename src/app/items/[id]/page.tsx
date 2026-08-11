@@ -3,8 +3,13 @@ import { notFound } from "next/navigation";
 import { ExternalLink, Search } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { deleteExpense, deleteItem, deleteSale } from "@/lib/actions";
-import { computeItemFinancials } from "@/lib/profit";
-import { formatCents, formatPercent } from "@/lib/money";
+import {
+  computeItemFinancials,
+  expenseMoney,
+  saleGrossMoney,
+  saleNetMoney,
+} from "@/lib/profit";
+import { formatPercent, formatRate } from "@/lib/currency";
 import { formatDate } from "@/lib/dates";
 import {
   EXPENSE_CATEGORY_LABELS,
@@ -13,7 +18,8 @@ import {
   ITEM_TYPE_LABELS,
   MARKETPLACE_LABELS,
 } from "@/lib/labels";
-import { Chip, PageHeader, ProfitValue } from "@/components/ui";
+import { Chip, PageHeader } from "@/components/ui";
+import { MoneyProfit, MoneyValue } from "@/components/Money";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ExpenseForm } from "@/components/ExpenseForm";
 import { SaleForm } from "@/components/SaleForm";
@@ -87,42 +93,67 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
         <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <div>
             <dt className="text-xs text-slate-500">Paid</dt>
-            <dd className="mt-1 tabular-nums">{formatCents(fin.purchaseCents)}</dd>
+            <dd className="mt-1">
+              <MoneyValue money={fin.purchase} primary={item.purchaseCurrency} align="left" />
+            </dd>
           </div>
           <div>
             <dt className="text-xs text-slate-500">Expenses</dt>
-            <dd className="mt-1 tabular-nums">{formatCents(fin.itemExpenseCents)}</dd>
+            <dd className="mt-1">
+              <MoneyValue money={fin.itemExpenses} align="left" />
+            </dd>
           </div>
           <div>
             <dt className="text-xs text-slate-500">Cost basis</dt>
-            <dd className="mt-1 font-medium tabular-nums">
-              {formatCents(fin.costBasisCents)}
+            <dd className="mt-1 font-medium">
+              <MoneyValue money={fin.costBasis} align="left" />
             </dd>
           </div>
           <div>
             <dt className="text-xs text-slate-500">Gross sale</dt>
-            <dd className="mt-1 tabular-nums">
-              {fin.isRealized ? formatCents(fin.grossSalesCents + fin.shippingCollectedCents) : "—"}
+            <dd className="mt-1">
+              {fin.isRealized ? (
+                <MoneyValue
+                  money={{
+                    usdCents: fin.grossSales.usdCents + fin.shippingCollected.usdCents,
+                    jpyYen: fin.grossSales.jpyYen + fin.shippingCollected.jpyYen,
+                  }}
+                  align="left"
+                />
+              ) : (
+                <span className="text-slate-500">—</span>
+              )}
             </dd>
           </div>
           <div>
             <dt className="text-xs text-slate-500">Net proceeds</dt>
-            <dd className="mt-1 tabular-nums">
-              {fin.isRealized ? formatCents(fin.netProceedsCents) : "—"}
+            <dd className="mt-1">
+              {fin.isRealized ? (
+                <MoneyValue money={fin.netProceeds} align="left" />
+              ) : (
+                <span className="text-slate-500">—</span>
+              )}
             </dd>
           </div>
           <div>
             <dt className="text-xs text-slate-500">Profit</dt>
             <dd className="mt-1">
-              <ProfitValue cents={fin.profitCents} />
-              {fin.roi !== null ? (
-                <span className="ml-2 text-xs text-slate-500">{formatPercent(fin.roi)}</span>
+              <MoneyProfit money={fin.profit} align="left" />
+              {fin.roi.usd !== null ? (
+                <span className="text-xs text-slate-500">
+                  {formatPercent(fin.roi.usd)} USD · {formatPercent(fin.roi.jpy)} JPY
+                </span>
               ) : null}
             </dd>
           </div>
         </dl>
         <p className="mt-4 text-xs text-slate-500">
           Bought {formatDate(item.acquiredAt)} from {MARKETPLACE_LABELS[item.purchaseSource]}
+          {" · paid in "}
+          {item.purchaseCurrency}
+          {item.purchaseFxJpyPerUsd
+            ? ` at ${formatRate(item.purchaseFxJpyPerUsd)}`
+            : ""}
           {item.purchaseNotes ? ` — ${item.purchaseNotes}` : ""}
         </p>
       </section>
@@ -166,8 +197,8 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
                     <td className="td">{EXPENSE_CATEGORY_LABELS[expense.category]}</td>
                     <td className="td">{expense.description}</td>
                     <td className="td text-slate-400">{expense.vendor ?? "—"}</td>
-                    <td className="td text-right tabular-nums">
-                      {formatCents(expense.amountCents)}
+                    <td className="td text-right">
+                      <MoneyValue money={expenseMoney(expense)} primary={expense.currency} />
                     </td>
                     <td className="td text-right">
                       <DeleteButton
@@ -185,8 +216,8 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
                   <td className="td font-medium" colSpan={4}>
                     Total
                   </td>
-                  <td className="td text-right font-medium tabular-nums">
-                    {formatCents(fin.itemExpenseCents)}
+                  <td className="td text-right font-medium">
+                    <MoneyValue money={fin.itemExpenses} />
                   </td>
                   <td />
                 </tr>
@@ -211,32 +242,34 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
         ) : (
           <div className="mb-6 space-y-4">
             {item.sales.map((sale) => {
-              const net =
-                sale.grossPriceCents +
-                sale.shippingCollectedCents -
-                sale.platformFeeCents -
-                sale.shippingCostCents -
-                sale.otherFeeCents;
+              const net = saleNetMoney(sale);
               return (
                 <div key={sale.id} className="rounded-lg border border-slate-800 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-lg font-semibold tabular-nums">
-                        {formatCents(sale.grossPriceCents)}
+                      <div className="flex items-center gap-2 text-lg font-semibold">
+                        <MoneyValue
+                          money={saleGrossMoney(sale)}
+                          primary={sale.currency}
+                          align="left"
+                        />
                         {sale.wasBestOffer ? (
-                          <span className="ml-2 align-middle">
-                            <Chip tone="amber">Best Offer accepted</Chip>
-                          </span>
+                          <Chip tone="amber">Best Offer accepted</Chip>
                         ) : null}
-                      </p>
+                      </div>
                       <p className="mt-1 text-sm text-slate-400">
                         {formatDate(sale.soldAt)} on {MARKETPLACE_LABELS[sale.platform]}
+                        {` · settled in ${sale.currency}`}
+                        {sale.fxJpyPerUsd ? ` at ${formatRate(sale.fxJpyPerUsd)}` : ""}
                         {sale.buyer ? ` · ${sale.buyer}` : ""}
                       </p>
-                      {sale.wasBestOffer && sale.listedPriceCents !== null ? (
+                      {sale.wasBestOffer && sale.listedPriceUsdCents !== null ? (
                         <p className="mt-1 text-xs text-slate-500">
-                          Was listed at {formatCents(sale.listedPriceCents)} — profit uses the
-                          accepted offer, not the asking price.
+                          Was listed at{" "}
+                          {sale.currency === "JPY"
+                            ? `¥${(sale.listedPriceJpyYen ?? 0).toLocaleString()}`
+                            : `$${((sale.listedPriceUsdCents ?? 0) / 100).toFixed(2)}`}{" "}
+                          — profit uses the accepted offer, not the asking price.
                         </p>
                       ) : null}
                     </div>
@@ -251,29 +284,61 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
                   <dl className="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
                     <div>
                       <dt className="text-xs text-slate-500">Shipping in</dt>
-                      <dd className="tabular-nums">{formatCents(sale.shippingCollectedCents)}</dd>
+                      <dd>
+                        <MoneyValue
+                          money={{
+                            usdCents: sale.shippingCollectedUsdCents,
+                            jpyYen: sale.shippingCollectedJpyYen,
+                          }}
+                          primary={sale.currency}
+                          align="left"
+                        />
+                      </dd>
                     </div>
                     <div>
                       <dt className="text-xs text-slate-500">Platform fees</dt>
-                      <dd className="tabular-nums text-rose-400">
-                        −{formatCents(sale.platformFeeCents)}
+                      <dd className="text-rose-400">
+                        <MoneyValue
+                          money={{
+                            usdCents: -sale.platformFeeUsdCents,
+                            jpyYen: -sale.platformFeeJpyYen,
+                          }}
+                          primary={sale.currency}
+                          align="left"
+                        />
                       </dd>
                     </div>
                     <div>
                       <dt className="text-xs text-slate-500">Postage</dt>
-                      <dd className="tabular-nums text-rose-400">
-                        −{formatCents(sale.shippingCostCents)}
+                      <dd className="text-rose-400">
+                        <MoneyValue
+                          money={{
+                            usdCents: -sale.shippingCostUsdCents,
+                            jpyYen: -sale.shippingCostJpyYen,
+                          }}
+                          primary={sale.currency}
+                          align="left"
+                        />
                       </dd>
                     </div>
                     <div>
                       <dt className="text-xs text-slate-500">Other fees</dt>
-                      <dd className="tabular-nums text-rose-400">
-                        −{formatCents(sale.otherFeeCents)}
+                      <dd className="text-rose-400">
+                        <MoneyValue
+                          money={{
+                            usdCents: -sale.otherFeeUsdCents,
+                            jpyYen: -sale.otherFeeJpyYen,
+                          }}
+                          primary={sale.currency}
+                          align="left"
+                        />
                       </dd>
                     </div>
                     <div>
                       <dt className="text-xs text-slate-500">Net</dt>
-                      <dd className="font-medium tabular-nums">{formatCents(net)}</dd>
+                      <dd className="font-medium">
+                        <MoneyValue money={net} primary={sale.currency} align="left" />
+                      </dd>
                     </div>
                   </dl>
 

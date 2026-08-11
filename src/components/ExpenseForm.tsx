@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { createExpense, type ActionState } from "@/lib/actions";
 import { todayInputValue } from "@/lib/dates";
+import { CURRENCIES, CURRENCY_LABELS } from "@/lib/currency";
 import { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABELS } from "@/lib/labels";
 import { Field, FormError } from "@/components/ui";
+import { FxRateNotice, FxRateProvider, MoneyInput } from "@/components/MoneyInput";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -28,11 +30,16 @@ export function ExpenseForm({
   defaultCategory?: (typeof EXPENSE_CATEGORIES)[number];
 }) {
   const [state, formAction] = useFormState(createExpense, {} as ActionState);
+  const [incurredAt, setIncurredAt] = useState(todayInputValue());
+  const [currency, setCurrency] = useState<"USD" | "JPY">("USD");
   const formRef = useRef<HTMLFormElement>(null);
 
   // Clear the fields after a successful add so several can be entered in a row.
   useEffect(() => {
-    if (state.ok) formRef.current?.reset();
+    if (state.ok) {
+      formRef.current?.reset();
+      setIncurredAt(todayInputValue());
+    }
   }, [state]);
 
   return (
@@ -60,26 +67,37 @@ export function ExpenseForm({
           />
         </Field>
 
-        <Field label="Amount">
-          <input
-            name="amount"
-            inputMode="decimal"
-            required
-            placeholder="0.00"
-            className="input"
-          />
-        </Field>
-
         <Field label="Date">
           <input
             name="incurredAt"
             type="date"
             required
-            defaultValue={todayInputValue()}
+            value={incurredAt}
+            onChange={(e) => setIncurredAt(e.target.value)}
             className="input"
           />
         </Field>
+
+        <Field label="Paid in">
+          <select
+            name="currency"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value as "USD" | "JPY")}
+            className="input"
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c} value={c}>
+                {CURRENCY_LABELS[c]}
+              </option>
+            ))}
+          </select>
+        </Field>
       </div>
+
+      <FxRateProvider date={incurredAt}>
+        <MoneyInput name="amount" label="Amount" required currency={currency} />
+        <FxRateNotice date={incurredAt} />
+      </FxRateProvider>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field label="Vendor">

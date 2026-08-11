@@ -1,10 +1,15 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { computeItemFinancials, computePortfolioTotals } from "@/lib/profit";
-import { formatCents, formatPercent } from "@/lib/money";
+import {
+  computeItemFinancials,
+  computePortfolioTotals,
+  saleGrossMoney,
+} from "@/lib/profit";
+import { formatPercent, type Money } from "@/lib/currency";
 import { formatDate, formatMonthKey, monthKey } from "@/lib/dates";
 import { EXPENSE_CATEGORY_LABELS, gradeLabel, ITEM_TYPE_LABELS } from "@/lib/labels";
-import { EmptyState, PageHeader, ProfitValue, StatCard } from "@/components/ui";
+import { EmptyState, PageHeader, StatCard } from "@/components/ui";
+import { MoneyProfit, MoneyValue } from "@/components/Money";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +36,7 @@ export default async function DashboardPage() {
   }
 
   // --- Profit by month, keyed off sale date ---
-  const byMonth = new Map<string, { profitCents: number; count: number }>();
+  const byMonth = new Map<string, { profit: Money; count: number }>();
   for (const item of items) {
     const fin = computeItemFinancials(item);
     if (!fin.isRealized) continue;
@@ -40,23 +45,29 @@ export default async function DashboardPage() {
       sale.soldAt > latest.soldAt ? sale : latest,
     );
     const key = monthKey(lastSale.soldAt);
-    const bucket = byMonth.get(key) ?? { profitCents: 0, count: 0 };
-    bucket.profitCents += fin.profitCents ?? 0;
+    const bucket = byMonth.get(key) ?? { profit: { usdCents: 0, jpyYen: 0 }, count: 0 };
+    bucket.profit = {
+      usdCents: bucket.profit.usdCents + (fin.profit?.usdCents ?? 0),
+      jpyYen: bucket.profit.jpyYen + (fin.profit?.jpyYen ?? 0),
+    };
     bucket.count += 1;
     byMonth.set(key, bucket);
   }
   const months = Array.from(byMonth.entries())
     .sort((a, b) => b[0].localeCompare(a[0]))
     .slice(0, 6);
-  const peak = Math.max(1, ...months.map(([, m]) => Math.abs(m.profitCents)));
+  const peak = Math.max(1, ...months.map(([, m]) => Math.abs(m.profit.usdCents)));
 
   // --- Expense breakdown across every expense, item-level and general ---
   const expenseGroups = await prisma.expense.groupBy({
     by: ["category"],
-    _sum: { amountCents: true },
-    orderBy: { _sum: { amountCents: "desc" } },
+    _sum: { amountUsdCents: true, amountJpyYen: true },
+    orderBy: { _sum: { amountUsdCents: "desc" } },
   });
-  const expenseTotal = expenseGroups.reduce((sum, g) => sum + (g._sum.amountCents ?? 0), 0);
+  const expenseTotal = expenseGroups.reduce(
+    (sum, g) => sum + (g._sum.amountUsdCents ?? 0),
+    0,
+  );
 
   const recentSales = await prisma.sale.findMany({
     take: 8,
@@ -79,32 +90,32 @@ export default async function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Net profit"
-          value={formatCents(totals.netProfitCents)}
+          value={<MoneyValue money={totals.netProfit} align="left" />}
           hint="After item costs and general expenses"
-          tone={totals.netProfitCents > 0 ? "positive" : totals.netProfitCents < 0 ? "negative" : "neutral"}
+          tone={totals.netProfit.usdCents > 0 ? "positive" : totals.netProfit.usdCents < 0 ? "negative" : "neutral"}
         />
         <StatCard
           label="Sales proceeds"
-          value={formatCents(totals.netProceedsCents)}
+          value={<MoneyValue money={totals.netProceeds} align="left" />}
           hint={`${totals.soldCount} item${totals.soldCount === 1 ? "" : "s"} sold, after fees`}
         />
         <StatCard
           label="Inventory cost basis"
-          value={formatCents(totals.inventoryCostBasisCents)}
+          value={<MoneyValue money={totals.inventoryCostBasis} align="left" />}
           hint={`${totals.unsoldCount} item${totals.unsoldCount === 1 ? "" : "s"} still held`}
         />
         <StatCard
           label="Return on sold"
-          value={formatPercent(totals.roi)}
-          hint="Net profit ÷ cost basis of sold items"
-          tone={totals.roi !== null && totals.roi > 0 ? "positive" : totals.roi !== null && totals.roi < 0 ? "negative" : "neutral"}
+          value={formatPercent(totals.roi.usd)}
+          hint={`Net profit ÷ cost basis of sold items · ${formatPercent(totals.roi.jpy)} in JPY`}
+          tone={totals.roi.usd !== null && totals.roi.usd > 0 ? "positive" : totals.roi.usd !== null && totals.roi.usd < 0 ? "negative" : "neutral"}
         />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Total spent on items" value={formatCents(totals.totalCostBasisCents)} hint="Purchase price + item expenses" />
-        <StatCard label="Profit before overhead" value={formatCents(totals.grossProfitCents)} hint="Sold items only" />
-        <StatCard label="General expenses" value={formatCents(totals.generalExpenseCents)} hint="Not tied to any one item" />
+        <StatCard label="Total spent on items" value={<MoneyValue money={totals.totalCostBasis} align="left" />} hint="Purchase price + item expenses" />
+        <StatCard label="Profit before overhead" value={<MoneyValue money={totals.grossProfit} align="left" />} hint="Sold items only" />
+        <StatCard label="General expenses" value={<MoneyValue money={totals.generalExpenses} align="left" />} hint="Not tied to any one item" />
       </div>
 
       <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -123,12 +134,12 @@ export default async function DashboardPage() {
                     <span className="text-slate-500">
                       {month.count} sale{month.count === 1 ? "" : "s"}
                     </span>
-                    <ProfitValue cents={month.profitCents} />
+                    <MoneyProfit money={month.profit} />
                   </div>
                   <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-800">
                     <div
-                      className={`h-full rounded-full ${month.profitCents >= 0 ? "bg-emerald-500" : "bg-rose-500"}`}
-                      style={{ width: `${(Math.abs(month.profitCents) / peak) * 100}%` }}
+                      className={`h-full rounded-full ${month.profit.usdCents >= 0 ? "bg-emerald-500" : "bg-rose-500"}`}
+                      style={{ width: `${(Math.abs(month.profit.usdCents) / peak) * 100}%` }}
                     />
                   </div>
                 </li>
@@ -146,21 +157,22 @@ export default async function DashboardPage() {
           ) : (
             <ul className="mt-4 space-y-3">
               {expenseGroups.map((group) => {
-                const amount = group._sum.amountCents ?? 0;
+                const amount: Money = {
+                  usdCents: group._sum.amountUsdCents ?? 0,
+                  jpyYen: group._sum.amountJpyYen ?? 0,
+                };
                 return (
                   <li key={group.category}>
                     <div className="flex items-baseline justify-between text-sm">
                       <span className="text-slate-300">
                         {EXPENSE_CATEGORY_LABELS[group.category]}
                       </span>
-                      <span className="tabular-nums text-slate-200">
-                        {formatCents(amount)}
-                      </span>
+                      <MoneyValue money={amount} />
                     </div>
                     <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-800">
                       <div
                         className="h-full rounded-full bg-sky-500"
-                        style={{ width: `${(amount / Math.max(1, expenseTotal)) * 100}%` }}
+                        style={{ width: `${(amount.usdCents / Math.max(1, expenseTotal)) * 100}%` }}
                       />
                     </div>
                   </li>
@@ -204,17 +216,17 @@ export default async function DashboardPage() {
                         </p>
                       </td>
                       <td className="td text-slate-400">{formatDate(sale.soldAt)}</td>
-                      <td className="td text-right tabular-nums">
-                        {formatCents(sale.grossPriceCents)}
+                      <td className="td text-right">
+                        <MoneyValue money={saleGrossMoney(sale)} primary={sale.currency} />
                         {sale.wasBestOffer ? (
-                          <span className="ml-1 text-xs text-amber-400">offer</span>
+                          <span className="text-xs text-amber-400">offer</span>
                         ) : null}
                       </td>
-                      <td className="td text-right tabular-nums text-slate-400">
-                        {formatCents(fin.costBasisCents)}
+                      <td className="td text-right">
+                        <MoneyValue money={fin.costBasis} />
                       </td>
                       <td className="td text-right">
-                        <ProfitValue cents={fin.profitCents} />
+                        <MoneyProfit money={fin.profit} />
                       </td>
                     </tr>
                   );

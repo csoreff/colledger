@@ -1,4 +1,4 @@
-import type { Grader } from "@prisma/client";
+import type { Currency, Grader } from "@prisma/client";
 import { GRADERS_WITH_PLUS_GRADE } from "@/lib/labels";
 import {
   CompProviderError,
@@ -6,6 +6,7 @@ import {
   type CompProviderResponse,
   type CompQuery,
   type CompResult,
+  type ProviderAmount,
 } from "../types";
 
 /**
@@ -107,10 +108,23 @@ export function inferGradeFromTitle(title: string): { grader: Grader; grade: str
   return { grader: "RAW", grade: null };
 }
 
-function toCents(value: unknown): number | null {
+/**
+ * eBay reports prices as a decimal string plus a currency code. JPY has no
+ * subunit, so it must not be scaled by 100 the way USD is.
+ */
+function toProviderAmount(
+  value: unknown,
+  currencyCode: unknown,
+): ProviderAmount | null {
   if (value === null || value === undefined) return null;
   const num = typeof value === "number" ? value : Number(String(value));
-  return Number.isFinite(num) ? Math.round(num * 100) : null;
+  if (!Number.isFinite(num)) return null;
+
+  const currency: Currency = String(currencyCode).toUpperCase() === "JPY" ? "JPY" : "USD";
+  return {
+    amountMinor: currency === "JPY" ? Math.round(num) : Math.round(num * 100),
+    currency,
+  };
 }
 
 // The v1_beta response shape. Parsed defensively — unknown/renamed fields are
@@ -124,7 +138,7 @@ type EbayItemSale = {
   lastSoldPrice?: { value?: string; currency?: string };
   image?: { imageUrl?: string };
   thumbnailImages?: Array<{ imageUrl?: string }>;
-  shippingOptions?: Array<{ shippingCost?: { value?: string } }>;
+  shippingOptions?: Array<{ shippingCost?: { value?: string; currency?: string } }>;
 };
 
 export class EbayApiCompProvider implements CompProvider {
@@ -182,8 +196,11 @@ export class EbayApiCompProvider implements CompProvider {
 
     const results: CompResult[] = [];
     for (const sale of sales) {
-      const priceCents = toCents(sale.lastSoldPrice?.value);
-      if (priceCents === null) continue; // no price, no comp
+      const salePrice = toProviderAmount(
+        sale.lastSoldPrice?.value,
+        sale.lastSoldPrice?.currency,
+      );
+      if (salePrice === null) continue; // no price, no comp
 
       const title = sale.title ?? "(untitled listing)";
       const inferred = inferGradeFromTitle(title);
@@ -195,10 +212,12 @@ export class EbayApiCompProvider implements CompProvider {
         url: sale.itemWebUrl ?? null,
         imageUrl: sale.image?.imageUrl ?? sale.thumbnailImages?.[0]?.imageUrl ?? null,
         soldAt: soldAt && !Number.isNaN(soldAt.getTime()) ? soldAt : null,
-        salePriceCents: priceCents,
-        listedPriceCents: null,
-        shippingCents: toCents(sale.shippingOptions?.[0]?.shippingCost?.value),
-        currency: sale.lastSoldPrice?.currency ?? "USD",
+        salePrice,
+        listedPrice: null,
+        shipping: toProviderAmount(
+          sale.shippingOptions?.[0]?.shippingCost?.value,
+          sale.shippingOptions?.[0]?.shippingCost?.currency ?? salePrice.currency,
+        ),
         // lastSoldPrice is the transacted amount, so an accepted Best Offer is
         // already reflected here. We cannot tell *whether* it was an offer, but
         // the number is the true one either way.

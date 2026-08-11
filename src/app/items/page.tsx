@@ -2,7 +2,6 @@ import Link from "next/link";
 import type { Grader, ItemStatus, ItemType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { computeItemFinancials } from "@/lib/profit";
-import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/dates";
 import {
   GRADER_LABELS,
@@ -12,8 +11,11 @@ import {
   ITEM_STATUSES,
   ITEM_TYPE_LABELS,
   ITEM_TYPES,
+  MARKETPLACE_LABELS,
+  MARKETPLACES,
 } from "@/lib/labels";
-import { Chip, EmptyState, PageHeader, ProfitValue } from "@/components/ui";
+import { Chip, EmptyState, PageHeader } from "@/components/ui";
+import { MoneyProfit, MoneyValue } from "@/components/Money";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +24,7 @@ type SearchParams = {
   type?: string;
   status?: string;
   grader?: string;
+  source?: string;
 };
 
 function statusTone(status: ItemStatus) {
@@ -64,6 +67,12 @@ export default async function ItemsPage({
   if (searchParams.grader && GRADERS.includes(searchParams.grader as Grader)) {
     where.grader = searchParams.grader as Grader;
   }
+  if (
+    searchParams.source &&
+    MARKETPLACES.includes(searchParams.source as (typeof MARKETPLACES)[number])
+  ) {
+    where.purchaseSource = searchParams.source as (typeof MARKETPLACES)[number];
+  }
 
   const items = await prisma.item.findMany({
     where,
@@ -72,7 +81,11 @@ export default async function ItemsPage({
   });
 
   const hasFilters = Boolean(
-    searchParams.q || searchParams.type || searchParams.status || searchParams.grader,
+    searchParams.q ||
+      searchParams.type ||
+      searchParams.status ||
+      searchParams.grader ||
+      searchParams.source,
   );
 
   return (
@@ -87,7 +100,7 @@ export default async function ItemsPage({
         }
       />
 
-      <form method="get" className="card mb-6 grid grid-cols-1 gap-3 sm:grid-cols-5">
+      <form method="get" className="card mb-6 grid grid-cols-1 gap-3 sm:grid-cols-6">
         <div className="sm:col-span-2">
           <label className="label">Search</label>
           <input
@@ -130,7 +143,18 @@ export default async function ItemsPage({
             ))}
           </select>
         </div>
-        <div className="flex gap-2 sm:col-span-5">
+        <div>
+          <label className="label">Bought from</label>
+          <select name="source" defaultValue={searchParams.source ?? ""} className="input">
+            <option value="">All</option>
+            {MARKETPLACES.map((m) => (
+              <option key={m} value={m}>
+                {MARKETPLACE_LABELS[m]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex gap-2 sm:col-span-6">
           <button type="submit" className="btn-primary">
             Apply filters
           </button>
@@ -185,26 +209,35 @@ export default async function ItemsPage({
                         {ITEM_TYPE_LABELS[item.type]}
                         {item.setName ? ` · ${item.setName}` : ""}
                         {item.number ? ` #${item.number}` : ""}
+                        {` · ${MARKETPLACE_LABELS[item.purchaseSource]}`}
                       </p>
                     </td>
                     <td className="td text-slate-300">
                       {gradeLabel(item.grader, item.grade, item.condition)}
                     </td>
                     <td className="td text-slate-400">{formatDate(item.acquiredAt)}</td>
-                    <td className="td text-right tabular-nums">
-                      {formatCents(fin.purchaseCents)}
-                    </td>
-                    <td className="td text-right tabular-nums text-slate-400">
-                      {fin.itemExpenseCents > 0 ? formatCents(fin.itemExpenseCents) : "—"}
-                    </td>
-                    <td className="td text-right tabular-nums">
-                      {formatCents(fin.costBasisCents)}
-                    </td>
-                    <td className="td text-right tabular-nums text-slate-400">
-                      {fin.isRealized ? formatCents(fin.netProceedsCents) : "—"}
+                    <td className="td text-right">
+                      <MoneyValue money={fin.purchase} primary={item.purchaseCurrency} />
                     </td>
                     <td className="td text-right">
-                      <ProfitValue cents={fin.profitCents} />
+                      {fin.itemExpenses.usdCents > 0 || fin.itemExpenses.jpyYen > 0 ? (
+                        <MoneyValue money={fin.itemExpenses} />
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </td>
+                    <td className="td text-right">
+                      <MoneyValue money={fin.costBasis} />
+                    </td>
+                    <td className="td text-right">
+                      {fin.isRealized ? (
+                        <MoneyValue money={fin.netProceeds} />
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </td>
+                    <td className="td text-right">
+                      <MoneyProfit money={fin.profit} />
                     </td>
                     <td className="td">
                       <Chip tone={statusTone(item.status)}>

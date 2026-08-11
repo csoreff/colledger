@@ -1,8 +1,15 @@
-import type { Grader, ItemType } from "@prisma/client";
+import type { Currency, Grader, ItemType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { getRateForDate } from "@/lib/fx";
+import { makeMoney, type Money } from "@/lib/currency";
 import { EbayApiCompProvider } from "./providers/ebayApi";
 import { ManualCompProvider } from "./providers/manual";
-import { CompProviderError, type CompProvider, type CompQuery } from "./types";
+import {
+  CompProviderError,
+  type CompProvider,
+  type CompQuery,
+  type ProviderAmount,
+} from "./types";
 
 const PROVIDERS: Record<string, CompProvider> = {
   "ebay-api": new EbayApiCompProvider(),
@@ -34,6 +41,30 @@ export function buildCacheKey(query: CompQuery, providerId: string): string {
   ].join("|");
 }
 
+/**
+ * Converts a provider's single-currency amount into the stored USD/JPY pair,
+ * using the rate for the date the item sold.
+ */
+async function toMoney(
+  amount: ProviderAmount | null | undefined,
+  soldAt: Date | null | undefined,
+): Promise<Money | null> {
+  if (!amount) return null;
+
+  const side =
+    amount.currency === "JPY"
+      ? { jpyYen: amount.amountMinor }
+      : { usdCents: amount.amountMinor };
+
+  try {
+    const rate = await getRateForDate(soldAt ?? new Date());
+    return makeMoney(side, rate.jpyPerUsd, amount.currency);
+  } catch {
+    // No rate available — keep the side we actually know rather than lose it.
+    return { usdCents: side.usdCents ?? 0, jpyYen: side.jpyYen ?? 0 };
+  }
+}
+
 export type RunSearchOptions = {
   /** Re-fetch even if a fresh cached search exists. */
   force?: boolean;
@@ -43,7 +74,7 @@ export type RunSearchOptions = {
  * Runs a comp search through the configured provider, persisting results.
  *
  * Manually-corrected prices live on the SoldComp rows, so a refresh must not
- * blindly wipe them: we carry `manualPriceCents` across by externalId.
+ * blindly wipe them: we carry the manual price across by externalId.
  */
 export async function runCompSearch(
   query: CompQuery,
@@ -58,18 +89,20 @@ export async function runCompSearch(
   });
 
   const ttlMs = cacheMinutes() * 60 * 1000;
-  const isFresh =
-    existing !== null && Date.now() - existing.fetchedAt.getTime() < ttlMs;
+  const isFresh = existing !== null && Date.now() - existing.fetchedAt.getTime() < ttlMs;
 
   if (existing && isFresh && !options.force) {
     return { searchId: existing.id, warning: existing.warning, fromCache: true };
   }
 
   // Preserve any prices the user corrected by hand on a previous run.
-  const manualByKey = new Map<string, number>();
+  const manualByKey = new Map<string, { usd: number | null; jpy: number | null }>();
   for (const comp of existing?.comps ?? []) {
-    if (comp.manualPriceCents !== null) {
-      manualByKey.set(comp.externalId ?? comp.title, comp.manualPriceCents);
+    if (comp.manualPriceUsdCents !== null || comp.manualPriceJpyYen !== null) {
+      manualByKey.set(comp.externalId ?? comp.title, {
+        usd: comp.manualPriceUsdCents,
+        jpy: comp.manualPriceJpyYen,
+      });
     }
   }
 
@@ -119,85 +152,125 @@ export async function runCompSearch(
   });
 
   if (results.length > 0) {
-    // Replace only provider-sourced rows; hand-added comps are kept.
-    await prisma.soldComp.deleteMany({
-      where: { searchId: search.id, provider: { not: "manual-entry" } },
-    });
+    const rows = [];
+    for (const r of results) {
+      const salePrice = await toMoney(r.salePrice, r.soldAt);
+      if (!salePrice) continue;
+      const listedPrice = await toMoney(r.listedPrice, r.soldAt);
+      const shipping = await toMoney(r.shipping, r.soldAt);
+      const manual = manualByKey.get(r.externalId ?? r.title);
 
-    await prisma.soldComp.createMany({
-      data: results.map((r) => ({
+      rows.push({
         searchId: search.id,
         externalId: r.externalId ?? null,
         title: r.title,
         url: r.url ?? null,
         imageUrl: r.imageUrl ?? null,
         soldAt: r.soldAt ?? null,
-        salePriceCents: r.salePriceCents,
-        listedPriceCents: r.listedPriceCents ?? null,
-        shippingCents: r.shippingCents ?? null,
-        currency: r.currency ?? "USD",
+        currency: r.salePrice.currency as Currency,
+        salePriceUsdCents: salePrice.usdCents,
+        salePriceJpyYen: salePrice.jpyYen,
+        listedPriceUsdCents: listedPrice?.usdCents ?? null,
+        listedPriceJpyYen: listedPrice?.jpyYen ?? null,
+        shippingUsdCents: shipping?.usdCents ?? null,
+        shippingJpyYen: shipping?.jpyYen ?? null,
         wasBestOffer: r.wasBestOffer ?? false,
         priceIsConfirmed: r.priceIsConfirmed,
-        manualPriceCents: manualByKey.get(r.externalId ?? r.title) ?? null,
+        manualPriceUsdCents: manual?.usd ?? null,
+        manualPriceJpyYen: manual?.jpy ?? null,
         grader: r.grader ?? null,
         grade: r.grade ?? null,
         condition: r.condition ?? null,
         provider: provider.id,
-      })),
+      });
+    }
+
+    // Replace only provider-sourced rows; hand-added comps are kept.
+    await prisma.soldComp.deleteMany({
+      where: { searchId: search.id, provider: { not: "manual-entry" } },
     });
+    if (rows.length > 0) {
+      await prisma.soldComp.createMany({ data: rows as never });
+    }
   }
 
   return { searchId: search.id, warning, fromCache: false };
 }
 
+type CompPriceFields = {
+  manualPriceUsdCents: number | null;
+  manualPriceJpyYen: number | null;
+  salePriceUsdCents: number;
+  salePriceJpyYen: number;
+};
+
 /** The price to trust for a comp: a hand-entered correction wins. */
-export function effectivePriceCents(comp: {
-  manualPriceCents: number | null;
-  salePriceCents: number;
-}): number {
-  return comp.manualPriceCents ?? comp.salePriceCents;
+export function effectivePrice(comp: CompPriceFields): Money {
+  if (comp.manualPriceUsdCents !== null || comp.manualPriceJpyYen !== null) {
+    return {
+      usdCents: comp.manualPriceUsdCents ?? 0,
+      jpyYen: comp.manualPriceJpyYen ?? 0,
+    };
+  }
+  return { usdCents: comp.salePriceUsdCents, jpyYen: comp.salePriceJpyYen };
 }
 
 export type CompStats = {
   count: number;
   confirmedCount: number;
   unconfirmedCount: number;
-  minCents: number;
-  maxCents: number;
-  medianCents: number;
-  meanCents: number;
+  min: Money;
+  max: Money;
+  median: Money;
+  mean: Money;
 };
 
+function stat(values: number[], pick: "min" | "max" | "median" | "mean"): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  switch (pick) {
+    case "min":
+      return sorted[0];
+    case "max":
+      return sorted[sorted.length - 1];
+    case "mean":
+      return Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length);
+    case "median": {
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 === 0
+        ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+        : sorted[mid];
+    }
+  }
+}
+
 /**
- * Summary stats over comps. Only confirmed prices are included — an unresolved
- * Best Offer asking price would bias every number upward.
+ * Summary stats over comps, in both currencies. Only confirmed prices are
+ * included — an unresolved Best Offer asking price would bias every number up.
+ *
+ * Each currency is ranked independently, so the USD median and the JPY median
+ * can come from different listings when rates moved between sale dates. That is
+ * intentional: each is the correct median in its own currency.
  */
 export function summarizeComps(
-  comps: Array<{
-    manualPriceCents: number | null;
-    salePriceCents: number;
-    priceIsConfirmed: boolean;
-  }>,
+  comps: Array<CompPriceFields & { priceIsConfirmed: boolean }>,
 ): CompStats | null {
-  const usable = comps.filter((c) => c.priceIsConfirmed || c.manualPriceCents !== null);
-  const prices = usable.map(effectivePriceCents).sort((a, b) => a - b);
+  const usable = comps.filter(
+    (c) => c.priceIsConfirmed || c.manualPriceUsdCents !== null || c.manualPriceJpyYen !== null,
+  );
+  if (usable.length === 0) return null;
 
-  if (prices.length === 0) return null;
-
-  const mid = Math.floor(prices.length / 2);
-  const medianCents =
-    prices.length % 2 === 0
-      ? Math.round((prices[mid - 1] + prices[mid]) / 2)
-      : prices[mid];
+  const prices = usable.map(effectivePrice);
+  const usd = prices.map((p) => p.usdCents);
+  const jpy = prices.map((p) => p.jpyYen);
 
   return {
     count: comps.length,
-    confirmedCount: prices.length,
-    unconfirmedCount: comps.length - prices.length,
-    minCents: prices[0],
-    maxCents: prices[prices.length - 1],
-    medianCents,
-    meanCents: Math.round(prices.reduce((a, b) => a + b, 0) / prices.length),
+    confirmedCount: usable.length,
+    unconfirmedCount: comps.length - usable.length,
+    min: { usdCents: stat(usd, "min"), jpyYen: stat(jpy, "min") },
+    max: { usdCents: stat(usd, "max"), jpyYen: stat(jpy, "max") },
+    median: { usdCents: stat(usd, "median"), jpyYen: stat(jpy, "median") },
+    mean: { usdCents: stat(usd, "mean"), jpyYen: stat(jpy, "mean") },
   };
 }
 

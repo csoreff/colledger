@@ -3,7 +3,6 @@ import type { Grader, ItemType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { buildCacheKey, getProvider, runCompSearch, summarizeComps } from "@/lib/comps";
 import { deleteComp, refreshComps } from "@/lib/actions";
-import { formatCents } from "@/lib/money";
 import { formatDate } from "@/lib/dates";
 import {
   GRADER_LABELS,
@@ -12,6 +11,7 @@ import {
   ITEM_TYPES,
 } from "@/lib/labels";
 import { Chip, PageHeader, StatCard } from "@/components/ui";
+import { MoneyValue } from "@/components/Money";
 import { CompPriceEditor } from "@/components/CompPriceEditor";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ManualCompForm } from "@/components/ManualCompForm";
@@ -163,12 +163,12 @@ export default async function CompsPage({ searchParams }: { searchParams: Search
             <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
               <StatCard
                 label="Median sold"
-                value={formatCents(stats.medianCents)}
+                value={<MoneyValue money={stats.median} align="left" />}
                 hint={`${stats.confirmedCount} confirmed price${stats.confirmedCount === 1 ? "" : "s"}`}
               />
-              <StatCard label="Average" value={formatCents(stats.meanCents)} />
-              <StatCard label="Low" value={formatCents(stats.minCents)} />
-              <StatCard label="High" value={formatCents(stats.maxCents)} />
+              <StatCard label="Average" value={<MoneyValue money={stats.mean} align="left" />} />
+              <StatCard label="Low" value={<MoneyValue money={stats.min} align="left" />} />
+              <StatCard label="High" value={<MoneyValue money={stats.max} align="left" />} />
             </div>
           ) : null}
 
@@ -229,19 +229,45 @@ export default async function CompsPage({ searchParams }: { searchParams: Search
                             ? `${comp.grader}${comp.grade ? ` ${comp.grade}` : ""}`
                             : (comp.condition ?? "Raw")}
                         </td>
-                        <td className="td text-right tabular-nums text-slate-500">
-                          {comp.listedPriceCents !== null
-                            ? formatCents(comp.listedPriceCents)
-                            : !comp.priceIsConfirmed
-                              ? formatCents(comp.salePriceCents)
-                              : "—"}
+                        <td className="td text-right text-slate-500">
+                          {comp.listedPriceUsdCents !== null ? (
+                            <MoneyValue
+                              money={{
+                                usdCents: comp.listedPriceUsdCents,
+                                jpyYen: comp.listedPriceJpyYen ?? 0,
+                              }}
+                              primary={comp.currency}
+                            />
+                          ) : !comp.priceIsConfirmed ? (
+                            <MoneyValue
+                              money={{
+                                usdCents: comp.salePriceUsdCents,
+                                jpyYen: comp.salePriceJpyYen,
+                              }}
+                              primary={comp.currency}
+                            />
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td className="td text-right">
                           <CompPriceEditor
                             compId={comp.id}
-                            salePriceCents={comp.salePriceCents}
-                            manualPriceCents={comp.manualPriceCents}
+                            salePrice={{
+                              usdCents: comp.salePriceUsdCents,
+                              jpyYen: comp.salePriceJpyYen,
+                            }}
+                            manualPrice={
+                              comp.manualPriceUsdCents !== null ||
+                              comp.manualPriceJpyYen !== null
+                                ? {
+                                    usdCents: comp.manualPriceUsdCents ?? 0,
+                                    jpyYen: comp.manualPriceJpyYen ?? 0,
+                                  }
+                                : null
+                            }
                             priceIsConfirmed={comp.priceIsConfirmed}
+                            currency={comp.currency}
                           />
                         </td>
                         <td className="td text-right">

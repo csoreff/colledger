@@ -1,6 +1,5 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { formatCentsSigned } from "@/lib/money";
 
 export function PageHeader({
   title,
@@ -29,7 +28,7 @@ export function StatCard({
   tone = "neutral",
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   hint?: string;
   tone?: "neutral" | "positive" | "negative";
 }) {
@@ -43,29 +42,9 @@ export function StatCard({
   return (
     <div className="card">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
-      <p className={`mt-2 text-2xl font-semibold tabular-nums ${toneClass}`}>{value}</p>
+      <div className={`mt-2 text-2xl font-semibold tabular-nums ${toneClass}`}>{value}</div>
       {hint ? <p className="mt-1 text-xs text-slate-500">{hint}</p> : null}
     </div>
-  );
-}
-
-/** Profit figure coloured by sign. */
-export function ProfitValue({
-  cents,
-  className = "",
-}: {
-  cents: number | null;
-  className?: string;
-}) {
-  if (cents === null) {
-    return <span className={`text-slate-500 ${className}`}>—</span>;
-  }
-  const tone =
-    cents > 0 ? "text-emerald-400" : cents < 0 ? "text-rose-400" : "text-slate-300";
-  return (
-    <span className={`tabular-nums font-medium ${tone} ${className}`}>
-      {formatCentsSigned(cents)}
-    </span>
   );
 }
 

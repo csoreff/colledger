@@ -1,8 +1,13 @@
 // Collectors Ledger — trading card & manga purchase/sale/expense tracking
 //
-// MONEY: every monetary value is stored as an integer number of cents.
-// This avoids float rounding drift and Prisma Decimal serialization headaches
-// across the server/client boundary. Format with `src/lib/money.ts`.
+// MONEY: every amount is stored twice, once per currency, as an integer in that
+// currency's minor unit — USD in cents, JPY in whole yen (yen has no subunit).
+// Integers avoid float drift and Prisma Decimal serialization headaches.
+//
+// Each record that carries money also records the currency it was actually
+// transacted in plus the FX rate used, so the converted figure is reproducible
+// and stays fixed at its historical value no matter how rates move later.
+// See `src/lib/currency.ts` and `src/lib/fx.ts`.
 
 generator client {
   provider = "prisma-client-js"
@@ -55,14 +60,44 @@ enum ExpenseCategory {
 
 enum Marketplace {
   EBAY
+  SNKRDUNK
+  PAYPAY_FLEA
+  YAHOO_AUCTIONS
+  MERCARI
   TCGPLAYER
   WHATNOT
-  MERCARI
   AMAZON
   FACEBOOK
   LOCAL
   SHOW
   OTHER
+}
+
+/// The two currencies the ledger works in. Every amount is held in both.
+enum Currency {
+  USD
+  JPY
+}
+
+/// Cached daily USD->JPY rate, so a given transaction date is fetched once.
+model FxRate {
+  id String @id @default(cuid())
+
+  /// The date that was asked for (may be a weekend or holiday).
+  requestedDate DateTime @unique
+  /// The date the rate actually comes from. Markets are shut at weekends, so
+  /// this rolls back to the previous business day.
+  effectiveDate DateTime
+  /// Yen per one US dollar, e.g. 157.45.
+  jpyPerUsd     Float
+  /// True when no rate existed for the requested date and the latest available
+  /// one was substituted (a future date, or before the ECB series begins).
+  isFallback    Boolean @default(false)
+  source        String  @default("frankfurter")
+
+  fetchedAt DateTime @default(now())
+
+  @@index([effectiveDate])
 }
 
 model Item {
@@ -91,10 +126,18 @@ model Item {
   quantity Int @default(1)
 
   // --- Acquisition ---
-  acquiredAt         DateTime
-  purchasePriceCents Int
-  purchaseSource     Marketplace @default(OTHER)
-  purchaseNotes      String?
+  acquiredAt DateTime
+  /// Where you bought it.
+  purchaseSource Marketplace @default(OTHER)
+
+  purchaseUsdCents Int
+  purchaseJpyYen   Int
+  /// The currency the purchase actually happened in; the other is derived.
+  purchaseCurrency Currency @default(USD)
+  purchaseFxJpyPerUsd Float?
+  purchaseFxDate      DateTime?
+
+  purchaseNotes String?
 
   status   ItemStatus @default(OWNED)
   imageUrl String?
@@ -125,10 +168,16 @@ model Expense {
 
   category    ExpenseCategory
   description String
-  amountCents Int
   incurredAt  DateTime
-  vendor      String?
-  notes       String?
+
+  amountUsdCents Int
+  amountJpyYen   Int
+  currency       Currency @default(USD)
+  fxJpyPerUsd    Float?
+  fxDate         DateTime?
+
+  vendor String?
+  notes  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -150,21 +199,32 @@ model Sale {
   platform Marketplace @default(EBAY)
   quantity Int         @default(1)
 
+  /// The currency the sale settled in; the paired figures are derived from it.
+  currency    Currency @default(USD)
+  fxJpyPerUsd Float?
+  fxDate      DateTime?
+
   /// What the buyer paid for the item itself (the true accepted price if this
   /// was a Best Offer — not the original asking price).
-  grossPriceCents        Int
+  grossPriceUsdCents Int
+  grossPriceJpyYen   Int
   /// Shipping charged to the buyer (revenue).
-  shippingCollectedCents Int @default(0)
+  shippingCollectedUsdCents Int @default(0)
+  shippingCollectedJpyYen   Int @default(0)
   /// Marketplace + payment processing fees.
-  platformFeeCents       Int @default(0)
+  platformFeeUsdCents Int @default(0)
+  platformFeeJpyYen   Int @default(0)
   /// Postage/packaging actually paid (cost).
-  shippingCostCents      Int @default(0)
-  otherFeeCents          Int @default(0)
+  shippingCostUsdCents Int @default(0)
+  shippingCostJpyYen   Int @default(0)
+  otherFeeUsdCents     Int @default(0)
+  otherFeeJpyYen       Int @default(0)
 
   /// True when the sale closed via an accepted Best Offer.
   wasBestOffer Boolean @default(false)
   /// Original asking price, kept for reference when wasBestOffer is true.
-  listedPriceCents Int?
+  listedPriceUsdCents Int?
+  listedPriceJpyYen   Int?
 
   buyer String?
   notes String?
@@ -222,12 +282,19 @@ model SoldComp {
   imageUrl   String?
   soldAt     DateTime?
 
-  /// The price we believe the buyer actually paid, in cents.
-  salePriceCents Int
+  /// The price we believe the buyer actually paid.
+  salePriceUsdCents Int
+  salePriceJpyYen   Int
   /// The original asking price when different from the sale price.
-  listedPriceCents Int?
-  shippingCents    Int?
-  currency         String @default("USD")
+  listedPriceUsdCents Int?
+  listedPriceJpyYen   Int?
+  shippingUsdCents    Int?
+  shippingJpyYen      Int?
+
+  /// The currency the listing was denominated in.
+  currency    Currency @default(USD)
+  fxJpyPerUsd Float?
+  fxDate      DateTime?
 
   /// The listing closed via an accepted Best Offer.
   wasBestOffer Boolean @default(false)
@@ -237,8 +304,9 @@ model SoldComp {
   priceIsConfirmed Boolean @default(true)
 
   /// A price the user typed in to correct/fill an unresolved Best Offer.
-  /// Takes precedence over salePriceCents everywhere in the UI.
-  manualPriceCents Int?
+  /// Takes precedence over the provider's price everywhere in the UI.
+  manualPriceUsdCents Int?
+  manualPriceJpyYen   Int?
 
   grader    Grader?
   grade     String?

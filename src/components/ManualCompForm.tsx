@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { addManualComp, type ActionState } from "@/lib/actions";
+import { CURRENCIES, CURRENCY_LABELS } from "@/lib/currency";
+import { todayInputValue } from "@/lib/dates";
 import { GRADER_LABELS, GRADERS } from "@/lib/labels";
 import { Field, FormError } from "@/components/ui";
+import { FxRateNotice, FxRateProvider, MoneyInput } from "@/components/MoneyInput";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -19,12 +22,15 @@ function SubmitButton() {
 export function ManualCompForm({ searchId }: { searchId: string }) {
   const [state, formAction] = useFormState(addManualComp, {} as ActionState);
   const [wasBestOffer, setWasBestOffer] = useState(false);
+  const [soldAt, setSoldAt] = useState(todayInputValue());
+  const [currency, setCurrency] = useState<"USD" | "JPY">("USD");
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (state.ok) {
       formRef.current?.reset();
       setWasBestOffer(false);
+      setSoldAt(todayInputValue());
     }
   }, [state]);
 
@@ -37,14 +43,31 @@ export function ManualCompForm({ searchId }: { searchId: string }) {
         <Field label="Listing title">
           <input name="title" required placeholder="PSA 10 Charizard Base Set" className="input" />
         </Field>
-        <Field label="Sale price" hint="What it actually sold for.">
-          <input name="salePrice" inputMode="decimal" required placeholder="0.00" className="input" />
+        <Field label="Sold in">
+          <select
+            name="currency"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value as "USD" | "JPY")}
+            className="input"
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c} value={c}>
+                {CURRENCY_LABELS[c]}
+              </option>
+            ))}
+          </select>
         </Field>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <Field label="Sold date">
-          <input name="soldAt" type="date" className="input" />
+          <input
+            name="soldAt"
+            type="date"
+            value={soldAt}
+            onChange={(e) => setSoldAt(e.target.value)}
+            className="input"
+          />
         </Field>
         <Field label="Grader">
           <select name="grader" defaultValue="" className="input">
@@ -75,11 +98,24 @@ export function ManualCompForm({ searchId }: { searchId: string }) {
         This was an accepted Best Offer
       </label>
 
-      {wasBestOffer ? (
-        <Field label="Original asking price" hint="Optional, for reference.">
-          <input name="listedPrice" inputMode="decimal" placeholder="0.00" className="input sm:max-w-xs" />
-        </Field>
-      ) : null}
+      <FxRateProvider date={soldAt}>
+        <MoneyInput
+          name="salePrice"
+          label="Sale price"
+          required
+          currency={currency}
+          hint="What it actually sold for."
+        />
+        {wasBestOffer ? (
+          <MoneyInput
+            name="listedPrice"
+            label="Original asking price"
+            currency={currency}
+            hint="Optional, for reference."
+          />
+        ) : null}
+        <FxRateNotice date={soldAt} />
+      </FxRateProvider>
 
       <SubmitButton />
     </form>

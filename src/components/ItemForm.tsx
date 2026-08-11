@@ -5,7 +5,7 @@ import { useFormState, useFormStatus } from "react-dom";
 import Link from "next/link";
 import type { Item } from "@prisma/client";
 import type { ActionState } from "@/lib/actions";
-import { centsToInputValue } from "@/lib/money";
+import { CURRENCIES, CURRENCY_LABELS, toInputValue } from "@/lib/currency";
 import { todayInputValue, toDateInputValue } from "@/lib/dates";
 import {
   gradeOptionsFor,
@@ -18,8 +18,10 @@ import {
   ITEM_TYPES,
   MARKETPLACE_LABELS,
   MARKETPLACES,
+  defaultCurrencyFor,
 } from "@/lib/labels";
 import { Field, FormError } from "@/components/ui";
+import { FxRateNotice, FxRateProvider, MoneyInput } from "@/components/MoneyInput";
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -42,6 +44,13 @@ export function ItemForm({
   const [state, formAction] = useFormState(action, {} as ActionState);
   const [grader, setGrader] = useState(item?.grader ?? "RAW");
   const [type, setType] = useState(item?.type ?? "CARD");
+  const [source, setSource] = useState(item?.purchaseSource ?? "EBAY");
+  const [currency, setCurrency] = useState(
+    item?.purchaseCurrency ?? defaultCurrencyFor(item?.purchaseSource ?? "EBAY"),
+  );
+  const [acquiredAt, setAcquiredAt] = useState(
+    item ? toDateInputValue(item.acquiredAt) : todayInputValue(),
+  );
 
   const isGraded = grader !== "RAW";
   const maxGrade = maxGradeLabel(grader);
@@ -208,33 +217,15 @@ export function ItemForm({
         </h2>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field label="Purchase price">
-            <input
-              name="purchasePrice"
-              inputMode="decimal"
-              required
-              defaultValue={centsToInputValue(item?.purchasePriceCents)}
-              placeholder="0.00"
-              className="input"
-            />
-          </Field>
-
-          <Field label="Purchase date">
-            <input
-              name="acquiredAt"
-              type="date"
-              required
-              defaultValue={
-                item ? toDateInputValue(item.acquiredAt) : todayInputValue()
-              }
-              className="input"
-            />
-          </Field>
-
           <Field label="Bought from">
             <select
               name="purchaseSource"
-              defaultValue={item?.purchaseSource ?? "EBAY"}
+              value={source}
+              onChange={(e) => {
+                const next = e.target.value as typeof source;
+                setSource(next);
+                setCurrency(defaultCurrencyFor(next));
+              }}
               className="input"
             >
               {MARKETPLACES.map((m) => (
@@ -244,7 +235,51 @@ export function ItemForm({
               ))}
             </select>
           </Field>
+
+          <Field label="Purchase date">
+            <input
+              name="acquiredAt"
+              type="date"
+              required
+              value={acquiredAt}
+              onChange={(e) => setAcquiredAt(e.target.value)}
+              className="input"
+            />
+          </Field>
+
+          <Field label="Paid in" hint="Which currency the money actually moved in.">
+            <select
+              name="purchaseCurrency"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value as typeof currency)}
+              className="input"
+            >
+              {CURRENCIES.map((c) => (
+                <option key={c} value={c}>
+                  {CURRENCY_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
+
+        <FxRateProvider date={acquiredAt}>
+          <MoneyInput
+            name="purchase"
+            label="Purchase price"
+            required
+            currency={currency}
+            defaultUsd={toInputValue(
+              item ? { usdCents: item.purchaseUsdCents, jpyYen: item.purchaseJpyYen } : null,
+              "USD",
+            )}
+            defaultJpy={toInputValue(
+              item ? { usdCents: item.purchaseUsdCents, jpyYen: item.purchaseJpyYen } : null,
+              "JPY",
+            )}
+          />
+          <FxRateNotice date={acquiredAt} />
+        </FxRateProvider>
 
         <Field label="Purchase notes">
           <input name="purchaseNotes" defaultValue={item?.purchaseNotes ?? ""} className="input" />

@@ -1,4 +1,4 @@
-import type { Grader, ItemType } from "@prisma/client";
+import type { Currency, Grader, ItemType } from "@prisma/client";
 
 export type CompQuery = {
   /** Free text, e.g. "Chainsaw Man vol 1 first print" or "Charizard base set". */
@@ -11,6 +11,13 @@ export type CompQuery = {
   limit?: number;
 };
 
+/**
+ * A price as the provider reported it, in one currency's minor unit
+ * (USD cents or whole yen). The caller converts to the stored USD/JPY pair
+ * using the rate for the sale date.
+ */
+export type ProviderAmount = { amountMinor: number; currency: Currency };
+
 export type CompResult = {
   externalId?: string | null;
   title: string;
@@ -18,19 +25,18 @@ export type CompResult = {
   imageUrl?: string | null;
   soldAt?: Date | null;
 
-  /** Best available price the buyer paid, in cents. */
-  salePriceCents: number;
+  /** Best available price the buyer paid. */
+  salePrice: ProviderAmount;
   /** Asking price, when it differs from what was actually paid. */
-  listedPriceCents?: number | null;
-  shippingCents?: number | null;
-  currency?: string;
+  listedPrice?: ProviderAmount | null;
+  shipping?: ProviderAmount | null;
 
   wasBestOffer?: boolean;
   /**
-   * TRUE  -> salePriceCents is the real transacted amount.
+   * TRUE  -> salePrice is the real transacted amount.
    * FALSE -> the listing closed via Best Offer and the provider could not see
-   *          the accepted amount, so salePriceCents is only the asking price
-   *          and should be treated as an upper bound.
+   *          the accepted amount, so salePrice is only the asking price and
+   *          should be treated as an upper bound.
    */
   priceIsConfirmed: boolean;
 
