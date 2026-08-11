@@ -20,10 +20,10 @@ function fix(primary: "USD" | "JPY", usd: number, jpy: number, rate: number) {
 async function main() {
   let changed = 0;
 
-  for (const s of await prisma.sale.findMany({ include: { item: { select: { title: true } } } })) {
+  for (const s of await prisma.sale.findMany({ include: { purchase: { include: { item: { select: { title: true } } } } } })) {
     if (!s.fxDate || days(s.fxDate, s.soldAt) <= 7) continue;
     const good = await getRateForDate(s.soldAt);
-    if (good.isFallback) { console.log(`SKIP ${s.item.title}: still no reliable rate`); continue; }
+    if (good.isFallback) { console.log(`SKIP ${s.purchase.item.title}: still no reliable rate`); continue; }
 
     const p = s.currency as "USD" | "JPY";
     const g = fix(p, s.grossPriceUsdCents, s.grossPriceJpyYen, good.jpyPerUsd);
@@ -34,7 +34,7 @@ async function main() {
     const lp = s.listedPriceUsdCents !== null && s.listedPriceJpyYen !== null
       ? fix(p, s.listedPriceUsdCents, s.listedPriceJpyYen, good.jpyPerUsd) : null;
 
-    console.log(`SALE "${s.item.title}" sold ${toDateInputValue(s.soldAt)} (settled in ${p})`);
+    console.log(`SALE "${s.purchase.item.title}" sold ${toDateInputValue(s.soldAt)} (settled in ${p})`);
     console.log(`  rate  ${s.fxJpyPerUsd} (from ${toDateInputValue(s.fxDate)})  ->  ${good.jpyPerUsd} (from ${toDateInputValue(good.effectiveDate)})`);
     console.log(`  gross $${(s.grossPriceUsdCents/100).toFixed(2)} -> $${(g.usdCents/100).toFixed(2)}   (¥${s.grossPriceJpyYen} unchanged)`);
 
@@ -52,13 +52,13 @@ async function main() {
     changed++;
   }
 
-  for (const i of await prisma.item.findMany()) {
+  for (const i of await prisma.purchase.findMany({ include: { item: { select: { title: true } } } })) {
     if (!i.purchaseFxDate || days(i.purchaseFxDate, i.acquiredAt) <= 7) continue;
     const good = await getRateForDate(i.acquiredAt);
-    if (good.isFallback) { console.log(`SKIP item ${i.title}`); continue; }
+    if (good.isFallback) { console.log(`SKIP purchase ${i.item.title}`); continue; }
     const m = fix(i.purchaseCurrency as "USD" | "JPY", i.purchaseUsdCents, i.purchaseJpyYen, good.jpyPerUsd);
-    console.log(`ITEM "${i.title}" $${(i.purchaseUsdCents/100).toFixed(2)} -> $${(m.usdCents/100).toFixed(2)}`);
-    if (APPLY) await prisma.item.update({ where: { id: i.id }, data: {
+    console.log(`PURCHASE "${i.item.title}" $${(i.purchaseUsdCents/100).toFixed(2)} -> $${(m.usdCents/100).toFixed(2)}`);
+    if (APPLY) await prisma.purchase.update({ where: { id: i.id }, data: {
       purchaseFxJpyPerUsd: good.jpyPerUsd, purchaseFxDate: good.effectiveDate,
       purchaseUsdCents: m.usdCents, purchaseJpyYen: m.jpyYen } });
     changed++;

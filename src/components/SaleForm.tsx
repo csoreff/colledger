@@ -19,7 +19,7 @@ function SubmitButton() {
   );
 }
 
-export function SaleForm({ itemId }: { itemId: string }) {
+export function SaleForm({ purchaseId }: { purchaseId: string }) {
   const [state, formAction] = useFormState(createSale, {} as ActionState);
   const [wasBestOffer, setWasBestOffer] = useState(false);
   const [soldAt, setSoldAt] = useState(todayInputValue());
@@ -38,7 +38,7 @@ export function SaleForm({ itemId }: { itemId: string }) {
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
       <FormError message={state.error} />
-      <input type="hidden" name="itemId" value={itemId} />
+      <input type="hidden" name="purchaseId" value={purchaseId} />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Field label="Sale date">

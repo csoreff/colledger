@@ -1,7 +1,7 @@
 import Link from "next/link";
-import type { Grader, ItemStatus, ItemType, Prisma } from "@prisma/client";
+import type { Grader, ItemStatus, ItemType, Marketplace, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { computeItemFinancials } from "@/lib/profit";
+import { computeItemRollup } from "@/lib/profit";
 import { formatDate } from "@/lib/dates";
 import {
   GRADER_LABELS,
@@ -27,21 +27,6 @@ type SearchParams = {
   source?: string;
 };
 
-function statusTone(status: ItemStatus) {
-  switch (status) {
-    case "SOLD":
-      return "emerald" as const;
-    case "LISTED":
-      return "sky" as const;
-    case "RETURNED":
-      return "amber" as const;
-    case "LOST":
-      return "rose" as const;
-    default:
-      return "slate" as const;
-  }
-}
-
 export default async function ItemsPage({
   searchParams,
 }: {
@@ -55,29 +40,38 @@ export default async function ItemsPage({
       { title: { contains: q, mode: "insensitive" } },
       { setName: { contains: q, mode: "insensitive" } },
       { number: { contains: q, mode: "insensitive" } },
-      { certNumber: { contains: q, mode: "insensitive" } },
+      { purchases: { some: { certNumber: { contains: q, mode: "insensitive" } } } },
     ];
   }
   if (searchParams.type && ITEM_TYPES.includes(searchParams.type as ItemType)) {
     where.type = searchParams.type as ItemType;
   }
+
+  // Copy-level filters match a card when *any* of its copies qualify, since the
+  // list shows one row per card.
+  const purchaseFilter: Prisma.PurchaseWhereInput = {};
   if (searchParams.status && ITEM_STATUSES.includes(searchParams.status as ItemStatus)) {
-    where.status = searchParams.status as ItemStatus;
+    purchaseFilter.status = searchParams.status as ItemStatus;
   }
   if (searchParams.grader && GRADERS.includes(searchParams.grader as Grader)) {
-    where.grader = searchParams.grader as Grader;
+    purchaseFilter.grader = searchParams.grader as Grader;
   }
-  if (
-    searchParams.source &&
-    MARKETPLACES.includes(searchParams.source as (typeof MARKETPLACES)[number])
-  ) {
-    where.purchaseSource = searchParams.source as (typeof MARKETPLACES)[number];
+  if (searchParams.source && MARKETPLACES.includes(searchParams.source as Marketplace)) {
+    purchaseFilter.purchaseSource = searchParams.source as Marketplace;
+  }
+  if (Object.keys(purchaseFilter).length > 0) {
+    where.purchases = { some: purchaseFilter };
   }
 
   const items = await prisma.item.findMany({
     where,
-    include: { expenses: true, sales: true },
-    orderBy: { acquiredAt: "desc" },
+    include: {
+      purchases: {
+        orderBy: { acquiredAt: "asc" },
+        include: { expenses: true, sales: true },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
   });
 
   const hasFilters = Boolean(
@@ -92,7 +86,7 @@ export default async function ItemsPage({
     <>
       <PageHeader
         title="Collection"
-        subtitle="Every card and manga you've bought, with what it cost and what it made."
+        subtitle="One row per card. Open a card to see every copy you've bought."
         action={
           <Link href="/items/new" className="btn-primary">
             Add item
@@ -168,7 +162,7 @@ export default async function ItemsPage({
 
       {items.length === 0 ? (
         <EmptyState
-          title={hasFilters ? "No items match those filters" : "No items yet"}
+          title={hasFilters ? "No cards match those filters" : "No items yet"}
           description={
             hasFilters
               ? "Try widening the search or clearing the filters."
@@ -179,23 +173,32 @@ export default async function ItemsPage({
         />
       ) : (
         <div className="card overflow-x-auto p-0">
-          <table className="w-full min-w-[900px]">
+          <table className="w-full min-w-[940px]">
             <thead className="border-b border-slate-800">
               <tr>
-                <th className="th">Item</th>
-                <th className="th">Grade</th>
-                <th className="th">Acquired</th>
-                <th className="th text-right">Paid</th>
-                <th className="th text-right">Expenses</th>
+                <th className="th">Card</th>
+                <th className="th">Copies</th>
+                <th className="th">Grades held</th>
+                <th className="th">First bought</th>
                 <th className="th text-right">Cost basis</th>
+                <th className="th text-right">Still held</th>
                 <th className="th text-right">Proceeds</th>
-                <th className="th text-right">Profit</th>
-                <th className="th">Status</th>
+                <th className="th text-right">Realized profit</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/70">
               {items.map((item) => {
-                const fin = computeItemFinancials(item);
+                const rollup = computeItemRollup(item);
+                const first = item.purchases[0];
+                // Distinct grade labels across copies, e.g. "PSA 10 · Raw · ARS 10+".
+                const grades = Array.from(
+                  new Set(
+                    item.purchases.map((p) =>
+                      gradeLabel(p.grader, p.grade, p.condition),
+                    ),
+                  ),
+                );
+
                 return (
                   <tr key={item.id} className="hover:bg-slate-800/30">
                     <td className="td">
@@ -209,40 +212,45 @@ export default async function ItemsPage({
                         {ITEM_TYPE_LABELS[item.type]}
                         {item.setName ? ` · ${item.setName}` : ""}
                         {item.number ? ` #${item.number}` : ""}
-                        {` · ${MARKETPLACE_LABELS[item.purchaseSource]}`}
+                        {item.variant ? ` · ${item.variant}` : ""}
                       </p>
                     </td>
-                    <td className="td text-slate-300">
-                      {gradeLabel(item.grader, item.grade, item.condition)}
-                    </td>
-                    <td className="td text-slate-400">{formatDate(item.acquiredAt)}</td>
-                    <td className="td text-right">
-                      <MoneyValue money={fin.purchase} primary={item.purchaseCurrency} />
-                    </td>
-                    <td className="td text-right">
-                      {fin.itemExpenses.usdCents > 0 || fin.itemExpenses.jpyYen > 0 ? (
-                        <MoneyValue money={fin.itemExpenses} />
-                      ) : (
-                        <span className="text-slate-500">—</span>
-                      )}
-                    </td>
-                    <td className="td text-right">
-                      <MoneyValue money={fin.costBasis} />
-                    </td>
-                    <td className="td text-right">
-                      {fin.isRealized ? (
-                        <MoneyValue money={fin.netProceeds} />
-                      ) : (
-                        <span className="text-slate-500">—</span>
-                      )}
-                    </td>
-                    <td className="td text-right">
-                      <MoneyProfit money={fin.profit} />
-                    </td>
                     <td className="td">
-                      <Chip tone={statusTone(item.status)}>
-                        {ITEM_STATUS_LABELS[item.status]}
-                      </Chip>
+                      <span className="flex flex-wrap gap-1">
+                        {rollup.heldCount > 0 ? (
+                          <Chip tone="sky">{rollup.heldCount} held</Chip>
+                        ) : null}
+                        {rollup.soldCount > 0 ? (
+                          <Chip tone="emerald">{rollup.soldCount} sold</Chip>
+                        ) : null}
+                      </span>
+                    </td>
+                    <td className="td text-xs text-slate-400">
+                      {grades.slice(0, 3).join(" · ")}
+                      {grades.length > 3 ? ` +${grades.length - 3}` : ""}
+                    </td>
+                    <td className="td text-slate-400">
+                      {first ? formatDate(first.acquiredAt) : "—"}
+                    </td>
+                    <td className="td text-right">
+                      <MoneyValue money={rollup.costBasis} />
+                    </td>
+                    <td className="td text-right">
+                      {rollup.heldCount > 0 ? (
+                        <MoneyValue money={rollup.inventoryCostBasis} />
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </td>
+                    <td className="td text-right">
+                      {rollup.soldCount > 0 ? (
+                        <MoneyValue money={rollup.netProceeds} />
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </td>
+                    <td className="td text-right">
+                      <MoneyProfit money={rollup.realizedProfit} />
                     </td>
                   </tr>
                 );

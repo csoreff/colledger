@@ -34,6 +34,7 @@ async function main() {
   await prisma.compSearch.deleteMany();
   await prisma.sale.deleteMany();
   await prisma.expense.deleteMany();
+  await prisma.purchase.deleteMany();
   await prisma.item.deleteMany();
 
   // Bought in yen on Yahoo Auctions, graded, sold in dollars on eBay via an
@@ -46,6 +47,8 @@ async function main() {
       number: "4/102",
       variant: "Japanese Unlimited Holo",
       language: "Japanese",
+      compQuery: "charizard base set japanese",
+      purchases: { create: [{
       grader: "PSA",
       grade: "8",
       certNumber: "12345678",
@@ -57,7 +60,6 @@ async function main() {
       purchaseUsdCents: jpy(68_000, RATE.buy).usdCents,
       purchaseJpyYen: 68_000,
       status: "SOLD",
-      compQuery: "charizard base set japanese",
       expenses: {
         create: [
           {
@@ -100,6 +102,7 @@ async function main() {
           shippingCostJpyYen: usd(12, RATE.sell).jpyYen,
         },
       },
+      }] },
     },
   });
 
@@ -112,6 +115,8 @@ async function main() {
       number: "1",
       variant: "1st print",
       language: "Japanese",
+      compQuery: "chainsaw man vol 1 first print",
+      purchases: { create: [{
       grader: "RAW",
       condition: "Like New",
       acquiredAt: daysAgo(45),
@@ -122,7 +127,6 @@ async function main() {
       purchaseUsdCents: jpy(1_800, RATE.buy).usdCents,
       purchaseJpyYen: 1_800,
       status: "OWNED",
-      compQuery: "chainsaw man vol 1 first print",
       expenses: {
         create: {
           category: "SUPPLIES",
@@ -134,6 +138,21 @@ async function main() {
           amountJpyYen: usd(3, RATE.buy).jpyYen,
         },
       },
+      },
+      // A second copy of the same volume, bought later and graded — this is
+      // what the purchase rows exist for.
+      {
+        grader: "CGC",
+        grade: "9.8",
+        acquiredAt: daysAgo(20),
+        purchaseSource: "SNKRDUNK",
+        purchaseCurrency: "JPY",
+        purchaseFxJpyPerUsd: RATE.sell,
+        purchaseFxDate: daysAgo(20),
+        purchaseUsdCents: jpy(12_500, RATE.sell).usdCents,
+        purchaseJpyYen: 12_500,
+        status: "LISTED",
+      }] },
     },
   });
 
@@ -144,6 +163,7 @@ async function main() {
       title: "One Piece Vol. 1",
       setName: "One Piece",
       number: "1",
+      purchases: { create: [{
       grader: "CGC",
       grade: "9.8",
       acquiredAt: daysAgo(80),
@@ -171,6 +191,7 @@ async function main() {
           shippingCostJpyYen: usd(9.5, RATE.sell).jpyYen,
         },
       },
+      }] },
     },
   });
 

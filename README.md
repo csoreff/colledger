@@ -20,19 +20,32 @@ run it once to look around, then wipe it and enter your own.
 
 ## What it tracks
 
-**Items** — a card or a manga volume. Graded (PSA/BGS/CGC/SGC/TAG/ACE/ARS, with
-grade and cert number) or raw with a free-text condition. Cards get set + card
-number; manga gets series + volume. Same model, relabelled per type. ARS is the
-one grader whose scale runs to **10+**; the form shows each grader's ceiling.
+**Items and purchases** — an **Item** is what the card or volume *is*: type,
+title, set/series, number/volume, variant, language. A **Purchase** is one copy
+you actually bought, and a card can have as many as you like. Each purchase row
+carries its own date, price, currency, source, grading, quantity and status, and
+owns its own expenses and sale.
+
+That separation is the point: buy the same card three times — a PSA 10 from
+Yahoo Auctions in yen, a raw copy from eBay in dollars, an ARS 10+ later — and
+each stays independent. Selling one copy never touches the others.
+
+Grading is per copy (PSA/BGS/CGC/SGC/TAG/ACE/ARS with grade and cert, or raw
+with a free-text condition), because cert numbers belong to a physical slab.
+ARS is the one grader whose scale runs to **10+**; the form shows each grader's
+ceiling.
+
+A row's **quantity** means "this one purchase covered N identical copies", and
+its price is the **total for the row, not per card**.
 
 **Where you bought and sold** — eBay, SNKRDUNK, PayPay Flea Market / Yahoo Flea,
 Yahoo Auctions, Mercari, TCGplayer, Whatnot, Amazon, Facebook, local, and shows.
 The collection list filters by source. Picking a Japanese marketplace defaults
 the currency to yen.
 
-**Expenses** — an item can have as many as you like: grading, inbound shipping,
-sleeves, whatever. Each one rolls into that item's cost basis. Expenses with no
-item attached are **general expenses** — supplies, subscriptions, show admission,
+**Expenses** — a purchase can have as many as you like: grading, inbound
+shipping, sleeves, whatever. Each rolls into that copy's cost basis. Expenses
+with no purchase attached are **general expenses** — supplies, subscriptions, show admission,
 mileage — tracked separately and subtracted from overall profit rather than from
 any single item. `/expenses` filters between the two.
 
@@ -42,11 +55,15 @@ original asking price.
 
 ### How profit is calculated
 
+Everything is computed **per purchase row**, then rolled up to the card and the
+portfolio:
+
 ```
-cost basis    = purchase price + that item's expenses
-net proceeds  = sale price + shipping collected − fees − postage
-item profit   = net proceeds − cost basis
-net profit    = Σ item profit − general expenses
+cost basis     = row's price + that row's expenses
+net proceeds   = sale price + shipping collected − fees − postage
+row profit     = net proceeds − cost basis
+card profit    = Σ profit of that card's sold rows
+net profit     = Σ row profit − general expenses
 ```
 
 Every one of those is computed in USD and JPY at once — see below.
@@ -158,11 +175,13 @@ overwritten by a refresh.
 
 ```
 prisma/schema.prisma        data model (every amount stored in USD cents + JPY yen)
-src/lib/profit.ts           cost basis, net proceeds, profit, ROI (both currencies)
+src/lib/profit.ts           per-row financials, card rollup, portfolio totals
 src/lib/currency.ts         the USD/JPY Money pair: conversion, parsing, formatting
 src/lib/fx.ts               historical rate lookup + caching + fallbacks
 src/lib/comps/              provider interface, eBay API client, caching, stats
 src/lib/actions.ts          server actions (create/update/delete)
+src/components/PurchaseRows.tsx  the repeatable purchase-row editor
+src/components/PurchaseCard.tsx  one expandable row on the item page
 src/app/                    dashboard, items, expenses, comps
 ```
 
@@ -172,6 +191,8 @@ Build and typecheck pass. Financial math checked by hand against seeded data.
 Unit assertions cover profit, cross-currency conversion, comp stats, and grade
 inference (including ARS 10+ and CGC 9.8). FX caching, weekend roll-back,
 out-of-range fallback and offline behaviour are tested against the live API.
-Playwright drives every form in a real browser — a yen purchase on Yahoo
-Auctions auto-converting to USD, a USD sale with a Best Offer, a yen expense,
-validation errors, and manual comp entry — with no console errors.
+Playwright drives every form in a real browser — creating a card with two
+purchase rows in different currencies, checking each row converts at its own
+date's rate, selling only one copy and confirming the others are untouched,
+adding a third copy from the item page, and the aggregated collection list —
+with no console errors and no hydration mismatches.

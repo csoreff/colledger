@@ -1,4 +1,4 @@
-import type { Currency, Expense, Item, Sale } from "@prisma/client";
+import type { Currency, Expense, Item, Purchase, Sale } from "@prisma/client";
 import {
   addMoney,
   amountIn,
@@ -8,17 +8,18 @@ import {
   type Money,
 } from "@/lib/currency";
 
-export type ItemWithLedger = Item & { expenses: Expense[]; sales: Sale[] };
+export type PurchaseWithLedger = Purchase & { expenses: Expense[]; sales: Sale[] };
+export type ItemWithPurchases = Item & { purchases: PurchaseWithLedger[] };
 
 /**
  * Every figure is computed in USD and JPY at once. Each underlying record was
- * converted at the rate on its own transaction date, so a card bought in yen
+ * converted at the rate on its own transaction date, so a copy bought in yen
  * and sold in dollars sums correctly in either currency.
  */
-export type ItemFinancials = {
+export type PurchaseFinancials = {
   purchase: Money;
-  itemExpenses: Money;
-  /** purchase + item expenses. Everything sunk into the item. */
+  expenses: Money;
+  /** purchase + that copy's expenses. Everything sunk into it. */
   costBasis: Money;
 
   grossSales: Money;
@@ -38,8 +39,8 @@ export function expenseMoney(expense: Expense): Money {
   return { usdCents: expense.amountUsdCents, jpyYen: expense.amountJpyYen };
 }
 
-export function purchaseMoney(item: Item): Money {
-  return { usdCents: item.purchaseUsdCents, jpyYen: item.purchaseJpyYen };
+export function purchaseMoney(purchase: Purchase): Money {
+  return { usdCents: purchase.purchaseUsdCents, jpyYen: purchase.purchaseJpyYen };
 }
 
 export function saleGrossMoney(sale: Sale): Money {
@@ -71,22 +72,24 @@ function ratio(profit: number, basis: number): number | null {
   return basis > 0 ? profit / basis : null;
 }
 
-export function computeItemFinancials(item: ItemWithLedger): ItemFinancials {
-  const purchase = purchaseMoney(item);
-  const itemExpenses = sumMoney(item.expenses.map(expenseMoney));
-  const costBasis = addMoney(purchase, itemExpenses);
+export function computePurchaseFinancials(
+  purchase: PurchaseWithLedger,
+): PurchaseFinancials {
+  const purchaseAmount = purchaseMoney(purchase);
+  const expenses = sumMoney(purchase.expenses.map(expenseMoney));
+  const costBasis = addMoney(purchaseAmount, expenses);
 
-  const grossSales = sumMoney(item.sales.map(saleGrossMoney));
-  const shippingCollected = sumMoney(item.sales.map(saleShippingCollectedMoney));
-  const sellingCosts = sumMoney(item.sales.map(saleCostsMoney));
+  const grossSales = sumMoney(purchase.sales.map(saleGrossMoney));
+  const shippingCollected = sumMoney(purchase.sales.map(saleShippingCollectedMoney));
+  const sellingCosts = sumMoney(purchase.sales.map(saleCostsMoney));
   const netProceeds = subtractMoney(addMoney(grossSales, shippingCollected), sellingCosts);
 
-  const isRealized = item.sales.length > 0;
+  const isRealized = purchase.sales.length > 0;
   const profit = isRealized ? subtractMoney(netProceeds, costBasis) : null;
 
   return {
-    purchase,
-    itemExpenses,
+    purchase: purchaseAmount,
+    expenses,
     costBasis,
     grossSales,
     shippingCollected,
@@ -101,8 +104,68 @@ export function computeItemFinancials(item: ItemWithLedger): ItemFinancials {
   };
 }
 
+/** Item-level rollup across every copy you've bought of one card. */
+export type ItemRollup = {
+  copies: number;
+  /** Sum of `quantity` across rows — actual physical count. */
+  units: number;
+  soldCount: number;
+  heldCount: number;
+
+  costBasis: Money;
+  /** Cost basis still sitting in unsold copies. */
+  inventoryCostBasis: Money;
+  netProceeds: Money;
+  /** Profit on sold copies only. Null when nothing has sold. */
+  realizedProfit: Money | null;
+  roi: { usd: number | null; jpy: number | null };
+};
+
+export function computeItemRollup(item: ItemWithPurchases): ItemRollup {
+  let costBasis = ZERO_MONEY;
+  let inventoryCostBasis = ZERO_MONEY;
+  let netProceeds = ZERO_MONEY;
+  let realizedProfit = ZERO_MONEY;
+  let soldCostBasis = ZERO_MONEY;
+  let soldCount = 0;
+  let heldCount = 0;
+  let units = 0;
+
+  for (const purchase of item.purchases) {
+    const fin = computePurchaseFinancials(purchase);
+    costBasis = addMoney(costBasis, fin.costBasis);
+    units += purchase.quantity;
+
+    if (fin.isRealized) {
+      soldCount += 1;
+      soldCostBasis = addMoney(soldCostBasis, fin.costBasis);
+      netProceeds = addMoney(netProceeds, fin.netProceeds);
+      realizedProfit = addMoney(realizedProfit, fin.profit ?? ZERO_MONEY);
+    } else if (purchase.status !== "LOST") {
+      heldCount += 1;
+      inventoryCostBasis = addMoney(inventoryCostBasis, fin.costBasis);
+    }
+  }
+
+  return {
+    copies: item.purchases.length,
+    units,
+    soldCount,
+    heldCount,
+    costBasis,
+    inventoryCostBasis,
+    netProceeds,
+    realizedProfit: soldCount > 0 ? realizedProfit : null,
+    roi: {
+      usd: soldCount > 0 ? ratio(realizedProfit.usdCents, soldCostBasis.usdCents) : null,
+      jpy: soldCount > 0 ? ratio(realizedProfit.jpyYen, soldCostBasis.jpyYen) : null,
+    },
+  };
+}
+
 export type PortfolioTotals = {
   itemCount: number;
+  purchaseCount: number;
   soldCount: number;
   unsoldCount: number;
 
@@ -110,7 +173,7 @@ export type PortfolioTotals = {
   inventoryCostBasis: Money;
 
   netProceeds: Money;
-  /** Profit on sold items only, before general overhead. */
+  /** Profit on sold copies only, before general overhead. */
   grossProfit: Money;
   generalExpenses: Money;
   /** grossProfit - generalExpenses. The real bottom line. */
@@ -120,8 +183,9 @@ export type PortfolioTotals = {
 };
 
 export function computePortfolioTotals(
-  items: ItemWithLedger[],
+  purchases: PurchaseWithLedger[],
   generalExpenses: Expense[],
+  itemCount: number,
 ): PortfolioTotals {
   let totalCostBasis = ZERO_MONEY;
   let inventoryCostBasis = ZERO_MONEY;
@@ -130,8 +194,8 @@ export function computePortfolioTotals(
   let soldCostBasis = ZERO_MONEY;
   let soldCount = 0;
 
-  for (const item of items) {
-    const fin = computeItemFinancials(item);
+  for (const purchase of purchases) {
+    const fin = computePurchaseFinancials(purchase);
     totalCostBasis = addMoney(totalCostBasis, fin.costBasis);
 
     if (fin.isRealized) {
@@ -139,7 +203,7 @@ export function computePortfolioTotals(
       soldCostBasis = addMoney(soldCostBasis, fin.costBasis);
       netProceeds = addMoney(netProceeds, fin.netProceeds);
       grossProfit = addMoney(grossProfit, fin.profit ?? ZERO_MONEY);
-    } else if (item.status !== "LOST") {
+    } else if (purchase.status !== "LOST") {
       inventoryCostBasis = addMoney(inventoryCostBasis, fin.costBasis);
     }
   }
@@ -148,9 +212,10 @@ export function computePortfolioTotals(
   const netProfit = subtractMoney(grossProfit, generalExpenseTotal);
 
   return {
-    itemCount: items.length,
+    itemCount,
+    purchaseCount: purchases.length,
     soldCount,
-    unsoldCount: items.length - soldCount,
+    unsoldCount: purchases.length - soldCount,
     totalCostBasis,
     inventoryCostBasis,
     netProceeds,

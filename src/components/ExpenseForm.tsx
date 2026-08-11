@@ -19,14 +19,14 @@ function SubmitButton() {
 }
 
 /**
- * Adds an expense. Pass `itemId` to attach it to an item; omit it for a
- * general expense that isn't tied to any single card or volume.
+ * Adds an expense. Pass `purchaseId` to attach it to one purchased copy; omit
+ * it for a general expense not tied to any single card or volume.
  */
 export function ExpenseForm({
-  itemId,
+  purchaseId,
   defaultCategory = "OTHER",
 }: {
-  itemId?: string;
+  purchaseId?: string;
   defaultCategory?: (typeof EXPENSE_CATEGORIES)[number];
 }) {
   const [state, formAction] = useFormState(createExpense, {} as ActionState);
@@ -45,7 +45,7 @@ export function ExpenseForm({
   return (
     <form ref={formRef} action={formAction} className="space-y-4">
       <FormError message={state.error} />
-      {itemId ? <input type="hidden" name="itemId" value={itemId} /> : null}
+      {purchaseId ? <input type="hidden" name="purchaseId" value={purchaseId} /> : null}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <Field label="Category">

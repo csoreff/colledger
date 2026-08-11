@@ -20,7 +20,6 @@ import {
   GRADERS,
   ITEM_STATUSES,
   ITEM_TYPES,
-  MARKETPLACES,
 } from "@/lib/labels";
 
 export type ActionState = { error?: string; ok?: boolean };
@@ -110,105 +109,205 @@ function fxColumns(resolver: MoneyResolver) {
 }
 
 // ---------------------------------------------------------------------------
-// Items
+// Items (identity) and their Purchases (one row per copy acquired)
+//
+// The form submits purchase rows with keys namespaced by a per-row id:
+// `p<rowId>_acquiredAt`, `p<rowId>_purchaseUsd`, and so on. Namespacing rather
+// than parallel arrays keeps rows intact when a field is conditionally
+// rendered (the grade box only exists on graded rows) or a middle row removed.
 // ---------------------------------------------------------------------------
 
-const itemSchema = z.object({
+const identitySchema = z.object({
   type: z.enum(ITEM_TYPES as [ItemType, ...ItemType[]]),
   title: z.string().min(1, "Title is required."),
   setName: z.string().nullable(),
   number: z.string().nullable(),
   variant: z.string().nullable(),
   language: z.string().min(1),
-  grader: z.enum(GRADERS as [Grader, ...Grader[]]),
-  grade: z.string().nullable(),
-  certNumber: z.string().nullable(),
-  condition: z.string().nullable(),
-  quantity: z.number().int().min(1, "Quantity must be at least 1."),
-  acquiredAt: z.date({ message: "A valid purchase date is required." }),
-  purchaseUsdCents: z.number().int().min(0, "Purchase price cannot be negative."),
-  purchaseJpyYen: z.number().int().min(0, "Purchase price cannot be negative."),
-  purchaseCurrency: z.enum(["USD", "JPY"]),
-  purchaseSource: z.enum(MARKETPLACES as [string, ...string[]]),
-  purchaseNotes: z.string().nullable(),
-  status: z.enum(ITEM_STATUSES as [string, ...string[]]),
   imageUrl: z.string().nullable(),
   notes: z.string().nullable(),
   compQuery: z.string().nullable(),
 });
 
-async function parseItemForm(form: FormData) {
-  const acquiredAt = parseDateInput(str(form, "acquiredAt"));
-  const currency = currencyOf(form, "purchaseCurrency");
-  const resolver = await moneyResolver(acquiredAt ?? new Date());
-  const purchase = resolver.resolve(form, "purchase", currency);
-
-  const quantityRaw = str(form, "quantity");
-  const parsed = itemSchema.safeParse({
+function parseIdentity(form: FormData) {
+  return identitySchema.safeParse({
     type: str(form, "type"),
     title: str(form, "title"),
     setName: optionalStr(form, "setName"),
     number: optionalStr(form, "number"),
     variant: optionalStr(form, "variant"),
     language: str(form, "language") || "English",
-    grader: str(form, "grader") || "RAW",
-    grade: optionalStr(form, "grade"),
-    certNumber: optionalStr(form, "certNumber"),
-    condition: optionalStr(form, "condition"),
-    quantity: quantityRaw === "" ? 1 : Number(quantityRaw),
-    acquiredAt: acquiredAt ?? undefined,
-    purchaseUsdCents: purchase?.usdCents,
-    purchaseJpyYen: purchase?.jpyYen,
-    purchaseCurrency: currency,
-    purchaseSource: str(form, "purchaseSource") || "OTHER",
-    purchaseNotes: optionalStr(form, "purchaseNotes"),
-    status: str(form, "status") || "OWNED",
     imageUrl: optionalStr(form, "imageUrl"),
     notes: optionalStr(form, "notes"),
     compQuery: optionalStr(form, "compQuery"),
   });
-
-  return { parsed, resolver, purchase };
 }
 
-function itemData(parsed: z.infer<typeof itemSchema>, resolver: MoneyResolver) {
-  const fx = fxColumns(resolver);
+/** Row ids present in the form, in the order the browser serialized them. */
+function purchaseRowIds(form: FormData): string[] {
+  const ids: string[] = [];
+  form.forEach((_value, key) => {
+    const match = /^p([A-Za-z0-9]+)_acquiredAt$/.exec(key);
+    if (match && !ids.includes(match[1])) ids.push(match[1]);
+  });
+  return ids;
+}
+
+export type PurchaseInput = {
+  id?: string;
+  grader: Grader;
+  grade: string | null;
+  certNumber: string | null;
+  condition: string | null;
+  quantity: number;
+  acquiredAt: Date;
+  purchaseSource: string;
+  purchaseCurrency: Currency;
+  purchaseUsdCents: number;
+  purchaseJpyYen: number;
+  purchaseFxJpyPerUsd: number | null;
+  purchaseFxDate: Date | null;
+  purchaseNotes: string | null;
+  status: string;
+};
+
+/** Builds one purchase row, or an error message describing what's missing. */
+async function buildPurchaseRow(
+  form: FormData,
+  rowId: string,
+  index: number,
+): Promise<{ row: PurchaseInput } | { error: string }> {
+  const label = `Purchase ${index + 1}`;
+  const field = (name: string) => `p${rowId}_${name}`;
+
+  const acquiredAt = parseDateInput(str(form, field("acquiredAt")));
+  if (!acquiredAt) return { error: `${label}: a valid purchase date is required.` };
+
+  const currency = currencyOf(form, field("purchaseCurrency"));
+  const resolver = await moneyResolver(acquiredAt);
+  const money = resolver.resolve(form, field("purchase"), currency);
+  if (!money) return { error: `${label}: enter the price in USD or JPY.` };
+  if (resolver.needsRate) {
+    return { error: `${label}: ${resolver.rateError ?? "exchange rate unavailable."}` };
+  }
+  if (money.usdCents < 0 || money.jpyYen < 0) {
+    return { error: `${label}: price cannot be negative.` };
+  }
+
+  const quantityRaw = str(form, field("quantity"));
+  const quantity = quantityRaw === "" ? 1 : Number(quantityRaw);
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    return { error: `${label}: quantity must be a whole number of at least 1.` };
+  }
+
+  const graderRaw = str(form, field("grader")) || "RAW";
+  if (!GRADERS.includes(graderRaw as Grader)) {
+    return { error: `${label}: unknown grading company.` };
+  }
+  const grader = graderRaw as Grader;
+
+  const existingId = optionalStr(form, field("id"));
+
   return {
-    ...parsed,
-    purchaseFxJpyPerUsd: fx.fxJpyPerUsd,
-    purchaseFxDate: fx.fxDate,
+    row: {
+      ...(existingId ? { id: existingId } : {}),
+      grader,
+      grade: grader === "RAW" ? null : optionalStr(form, field("grade")),
+      certNumber: grader === "RAW" ? null : optionalStr(form, field("certNumber")),
+      condition: grader === "RAW" ? optionalStr(form, field("condition")) : null,
+      quantity,
+      acquiredAt,
+      purchaseSource: str(form, field("purchaseSource")) || "OTHER",
+      purchaseCurrency: currency,
+      purchaseUsdCents: money.usdCents,
+      purchaseJpyYen: money.jpyYen,
+      purchaseFxJpyPerUsd: resolver.rate?.jpyPerUsd ?? null,
+      purchaseFxDate: resolver.rate?.effectiveDate ?? null,
+      purchaseNotes: optionalStr(form, field("purchaseNotes")),
+      status: str(form, field("status")) || "OWNED",
+    },
   };
+}
+
+/** Drops the client-side row id, which is not a column. */
+function stripRowId(row: PurchaseInput): Omit<PurchaseInput, "id"> {
+  const copy = { ...row };
+  delete copy.id;
+  return copy;
+}
+
+async function collectPurchaseRows(
+  form: FormData,
+): Promise<{ rows: PurchaseInput[] } | { error: string }> {
+  const ids = purchaseRowIds(form);
+  if (ids.length === 0) return { error: "Add at least one purchase." };
+
+  const rows: PurchaseInput[] = [];
+  for (let index = 0; index < ids.length; index += 1) {
+    const result = await buildPurchaseRow(form, ids[index], index);
+    if ("error" in result) return { error: result.error };
+    rows.push(result.row);
+  }
+  return { rows };
 }
 
 export async function createItem(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const { parsed, resolver, purchase } = await parseItemForm(form);
-  if (!purchase) return { error: "Enter the purchase price in USD or JPY." };
-  if (!parsed.success) return { error: firstIssue(parsed.error) };
-  if (resolver.needsRate) return { error: resolver.rateError ?? "Exchange rate unavailable." };
+  const identity = parseIdentity(form);
+  if (!identity.success) return { error: firstIssue(identity.error) };
 
-  const item = await prisma.item.create({ data: itemData(parsed.data, resolver) as never });
+  const collected = await collectPurchaseRows(form);
+  if ("error" in collected) return { error: collected.error };
+
+  const item = await prisma.item.create({
+    data: {
+      ...identity.data,
+      purchases: {
+        create: collected.rows.map((row) => stripRowId(row)),
+      },
+    } as never,
+  });
 
   revalidatePath("/");
   revalidatePath("/items");
   redirect(`/items/${item.id}`);
 }
 
+/**
+ * Saves identity plus the full set of rows. Rows carrying an existing id are
+ * updated in place so their expenses and sales stay attached; rows without one
+ * are new; rows no longer present were removed in the form and are deleted
+ * along with everything hanging off them.
+ */
 export async function updateItem(
   itemId: string,
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const { parsed, resolver, purchase } = await parseItemForm(form);
-  if (!purchase) return { error: "Enter the purchase price in USD or JPY." };
-  if (!parsed.success) return { error: firstIssue(parsed.error) };
-  if (resolver.needsRate) return { error: resolver.rateError ?? "Exchange rate unavailable." };
+  const identity = parseIdentity(form);
+  if (!identity.success) return { error: firstIssue(identity.error) };
 
-  await prisma.item.update({
-    where: { id: itemId },
-    data: itemData(parsed.data, resolver) as never,
+  const collected = await collectPurchaseRows(form);
+  if ("error" in collected) return { error: collected.error };
+
+  const keptIds = collected.rows.map((r) => r.id).filter(Boolean) as string[];
+
+  await prisma.$transaction(async (tx) => {
+    await tx.item.update({ where: { id: itemId }, data: identity.data as never });
+
+    await tx.purchase.deleteMany({
+      where: { itemId, ...(keptIds.length ? { id: { notIn: keptIds } } : {}) },
+    });
+
+    for (const { id, ...row } of collected.rows) {
+      if (id) {
+        await tx.purchase.update({ where: { id }, data: row as never });
+      } else {
+        await tx.purchase.create({ data: { ...row, itemId } as never });
+      }
+    }
   });
 
   revalidatePath("/");
@@ -224,12 +323,53 @@ export async function deleteItem(itemId: string): Promise<void> {
   redirect("/items");
 }
 
+/** Adds one more copy to an existing card, straight from the item page. */
+export async function addPurchase(
+  itemId: string,
+  _prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const collected = await collectPurchaseRows(form);
+  if ("error" in collected) return { error: collected.error };
+
+  await prisma.purchase.createMany({
+    data: collected.rows.map((row) => ({ ...stripRowId(row), itemId })) as never,
+  });
+
+  revalidatePath("/");
+  revalidatePath("/items");
+  revalidatePath(`/items/${itemId}`);
+  return { ok: true };
+}
+
+export async function deletePurchase(purchaseId: string): Promise<void> {
+  const purchase = await prisma.purchase.delete({ where: { id: purchaseId } });
+  revalidatePath("/");
+  revalidatePath("/items");
+  revalidatePath(`/items/${purchase.itemId}`);
+}
+
+/** Status changes are frequent enough to deserve a one-click path. */
+export async function setPurchaseStatus(
+  purchaseId: string,
+  status: string,
+): Promise<void> {
+  if (!ITEM_STATUSES.includes(status as (typeof ITEM_STATUSES)[number])) return;
+  const purchase = await prisma.purchase.update({
+    where: { id: purchaseId },
+    data: { status: status as never },
+  });
+  revalidatePath("/");
+  revalidatePath("/items");
+  revalidatePath(`/items/${purchase.itemId}`);
+}
+
 // ---------------------------------------------------------------------------
 // Expenses — itemId null means a general (non-item) expense.
 // ---------------------------------------------------------------------------
 
 const expenseSchema = z.object({
-  itemId: z.string().nullable(),
+  purchaseId: z.string().nullable(),
   category: z.enum(EXPENSE_CATEGORIES as [string, ...string[]]),
   description: z.string().min(1, "Description is required."),
   amountUsdCents: z.number().int(),
@@ -255,7 +395,7 @@ export async function createExpense(
   }
 
   const parsed = expenseSchema.safeParse({
-    itemId: optionalStr(form, "itemId"),
+    purchaseId: optionalStr(form, "purchaseId"),
     category: str(form, "category") || "OTHER",
     description: str(form, "description"),
     amountUsdCents: amount.usdCents,
@@ -274,15 +414,15 @@ export async function createExpense(
 
   revalidatePath("/");
   revalidatePath("/expenses");
-  if (parsed.data.itemId) revalidatePath(`/items/${parsed.data.itemId}`);
+  revalidatePath("/items", "layout");
   return { ok: true };
 }
 
 export async function deleteExpense(expenseId: string): Promise<void> {
-  const expense = await prisma.expense.delete({ where: { id: expenseId } });
+  await prisma.expense.delete({ where: { id: expenseId } });
   revalidatePath("/");
   revalidatePath("/expenses");
-  if (expense.itemId) revalidatePath(`/items/${expense.itemId}`);
+  revalidatePath("/items", "layout");
 }
 
 // ---------------------------------------------------------------------------
@@ -293,9 +433,9 @@ export async function createSale(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const itemId = str(form, "itemId");
+  const purchaseId = str(form, "purchaseId");
   const soldAt = parseDateInput(str(form, "soldAt"));
-  if (!itemId) return { error: "Missing item." };
+  if (!purchaseId) return { error: "Missing purchase." };
   if (!soldAt) return { error: "A valid sale date is required." };
 
   const currency = currencyOf(form);
@@ -324,7 +464,7 @@ export async function createSale(
 
   await prisma.sale.create({
     data: {
-      itemId,
+      purchaseId,
       soldAt,
       platform: (str(form, "platform") || "EBAY") as never,
       quantity,
@@ -348,26 +488,29 @@ export async function createSale(
     } as never,
   });
 
-  // Recording a sale is what marks an item sold; no reason to do it twice.
-  await prisma.item.update({ where: { id: itemId }, data: { status: "SOLD" } });
+  // Recording a sale is what marks that copy sold; no reason to do it twice.
+  const purchase = await prisma.purchase.update({
+    where: { id: purchaseId },
+    data: { status: "SOLD" },
+  });
 
   revalidatePath("/");
   revalidatePath("/items");
-  revalidatePath(`/items/${itemId}`);
+  revalidatePath(`/items/${purchase.itemId}`);
   return { ok: true };
 }
 
 export async function deleteSale(saleId: string): Promise<void> {
   const sale = await prisma.sale.delete({ where: { id: saleId } });
 
-  const remaining = await prisma.sale.count({ where: { itemId: sale.itemId } });
-  if (remaining === 0) {
-    await prisma.item.update({ where: { id: sale.itemId }, data: { status: "OWNED" } });
-  }
+  const remaining = await prisma.sale.count({ where: { purchaseId: sale.purchaseId } });
+  const purchase = remaining === 0
+    ? await prisma.purchase.update({ where: { id: sale.purchaseId }, data: { status: "OWNED" } })
+    : await prisma.purchase.findUnique({ where: { id: sale.purchaseId } });
 
   revalidatePath("/");
   revalidatePath("/items");
-  revalidatePath(`/items/${sale.itemId}`);
+  if (purchase) revalidatePath(`/items/${purchase.itemId}`);
 }
 
 // ---------------------------------------------------------------------------

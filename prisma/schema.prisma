@@ -103,6 +103,7 @@ model FxRate {
 model Item {
   id String @id @default(cuid())
 
+  // --- Identity: what the card or volume *is* ---
   type  ItemType
   title String
 
@@ -115,19 +116,46 @@ model Item {
   /// e.g. "English", "Japanese".
   language String @default("English")
 
-  // --- Grading ---
+  imageUrl String?
+  notes    String?
+
+  /// Saved search string used when pulling eBay sold comps for this item.
+  compQuery String?
+
+  /// Every copy you've acquired. Grading, price and status live per copy,
+  /// because the same card bought twice can be a PSA 10 and a raw NM.
+  purchases Purchase[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([type])
+  @@index([title])
+}
+
+/// One acquisition of one item — a row in the purchases table. Owns its own
+/// money, condition, status, expenses and sale, so several copies of the same
+/// card bought on different dates at different prices stay independent.
+model Purchase {
+  id String @id @default(cuid())
+
+  itemId String
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  // --- Condition of this particular copy ---
   grader     Grader  @default(RAW)
-  /// Numeric or letter grade as printed on the slab, e.g. "10", "9.5", "A+".
+  /// Numeric or letter grade as printed on the slab, e.g. "10", "9.5", "10+".
   grade      String?
   certNumber String?
   /// Raw condition when ungraded, e.g. "NM", "LP", "Like New".
   condition  String?
 
+  /// How many identical copies this one purchase covered. The price below is
+  /// the total for the row, not a per-unit figure.
   quantity Int @default(1)
 
   // --- Acquisition ---
-  acquiredAt DateTime
-  /// Where you bought it.
+  acquiredAt     DateTime
   purchaseSource Marketplace @default(OTHER)
 
   purchaseUsdCents Int
@@ -139,12 +167,8 @@ model Item {
 
   purchaseNotes String?
 
-  status   ItemStatus @default(OWNED)
-  imageUrl String?
-  notes    String?
-
-  /// Saved search string used when pulling eBay sold comps for this item.
-  compQuery String?
+  status ItemStatus @default(OWNED)
+  notes  String?
 
   expenses Expense[]
   sales    Sale[]
@@ -152,19 +176,21 @@ model Item {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([type])
+  @@index([itemId])
   @@index([status])
   @@index([acquiredAt])
+  @@index([grader])
+  @@index([purchaseSource])
 }
 
-/// An expense. When `itemId` is null it is a GENERAL expense — overhead that
-/// is not attributable to any single item (supplies, subscriptions, travel).
-/// One item may have many expenses.
+/// An expense. When `purchaseId` is null it is a GENERAL expense — overhead
+/// that is not attributable to any single copy (supplies, subscriptions,
+/// travel). One purchase may have many expenses.
 model Expense {
   id String @id @default(cuid())
 
-  itemId String?
-  item   Item?   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  purchaseId String?
+  purchase   Purchase? @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
 
   category    ExpenseCategory
   description String
@@ -182,18 +208,18 @@ model Expense {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([itemId])
+  @@index([purchaseId])
   @@index([category])
   @@index([incurredAt])
 }
 
-/// A sale of an item. Items may be sold across multiple transactions when
-/// quantity > 1, so this is a list rather than a one-to-one.
+/// A sale of one purchased copy. A row may sell across more than one
+/// transaction when its quantity is greater than 1.
 model Sale {
   id String @id @default(cuid())
 
-  itemId String
-  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
 
   soldAt   DateTime
   platform Marketplace @default(EBAY)
@@ -232,7 +258,7 @@ model Sale {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([itemId])
+  @@index([purchaseId])
   @@index([soldAt])
 }
 

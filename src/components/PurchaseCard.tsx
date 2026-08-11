@@ -1,0 +1,283 @@
+"use client";
+
+import { useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
+import type { Expense, Purchase, Sale } from "@prisma/client";
+import type { PurchaseFinancials } from "@/lib/profit";
+import type { Money } from "@/lib/currency";
+import { formatJpy, formatPercent, formatRate, formatUsd } from "@/lib/currency";
+import { formatDate } from "@/lib/dates";
+import {
+  EXPENSE_CATEGORY_LABELS,
+  gradeLabel,
+  ITEM_STATUS_LABELS,
+  MARKETPLACE_LABELS,
+} from "@/lib/labels";
+import { Chip } from "@/components/ui";
+import { MoneyProfit, MoneyValue } from "@/components/Money";
+import { DeleteButton } from "@/components/DeleteButton";
+import { ExpenseForm } from "@/components/ExpenseForm";
+import { SaleForm } from "@/components/SaleForm";
+
+type SaleSummary = Sale & { net: Money };
+
+function statusTone(status: string) {
+  if (status === "SOLD") return "emerald" as const;
+  if (status === "LISTED") return "sky" as const;
+  if (status === "RETURNED") return "amber" as const;
+  if (status === "LOST") return "rose" as const;
+  return "slate" as const;
+}
+
+/**
+ * One purchase row: a collapsed summary line that expands to that copy's own
+ * expenses and sale. Collapsed by default so a card with many copies stays
+ * scannable.
+ */
+export function PurchaseCard({
+  purchase,
+  index,
+  fin,
+  sales,
+  deletePurchase,
+  deleteExpense,
+  deleteSale,
+  defaultOpen,
+}: {
+  purchase: Purchase & { expenses: Expense[] };
+  index: number;
+  fin: PurchaseFinancials;
+  sales: SaleSummary[];
+  deletePurchase: () => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
+  deleteSale: (id: string) => Promise<void>;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/40">
+      <div className="flex flex-wrap items-center gap-3 p-4">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex flex-1 items-center gap-3 text-left"
+          aria-expanded={open}
+        >
+          {open ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-slate-500" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-slate-500" />
+          )}
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            #{index + 1}
+          </span>
+          <span className="flex flex-col">
+            <span className="text-sm text-slate-200">
+              {gradeLabel(purchase.grader, purchase.grade, purchase.condition)}
+              {purchase.quantity > 1 ? ` · ×${purchase.quantity}` : ""}
+            </span>
+            <span className="text-xs text-slate-500">
+              {formatDate(purchase.acquiredAt)} ·{" "}
+              {MARKETPLACE_LABELS[purchase.purchaseSource]}
+            </span>
+          </span>
+        </button>
+
+        <div className="flex items-center gap-5">
+          <span className="flex flex-col items-end">
+            <span className="text-[10px] uppercase tracking-wide text-slate-600">Basis</span>
+            <MoneyValue money={fin.costBasis} primary={purchase.purchaseCurrency} />
+          </span>
+          <span className="flex flex-col items-end">
+            <span className="text-[10px] uppercase tracking-wide text-slate-600">Profit</span>
+            <MoneyProfit money={fin.profit} primary={purchase.purchaseCurrency} />
+          </span>
+          <Chip tone={statusTone(purchase.status)}>
+            {ITEM_STATUS_LABELS[purchase.status as keyof typeof ITEM_STATUS_LABELS]}
+          </Chip>
+          <DeleteButton
+            action={deletePurchase}
+            label="Delete purchase"
+            confirmMessage={`Delete purchase #${index + 1}? Its expenses and sale go too.`}
+            iconOnly
+          />
+        </div>
+      </div>
+
+      {open ? (
+        <div className="space-y-6 border-t border-slate-800 p-4">
+          <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+            <div>
+              <dt className="text-xs text-slate-500">Paid</dt>
+              <dd className="mt-1">
+                <MoneyValue
+                  money={fin.purchase}
+                  primary={purchase.purchaseCurrency}
+                  align="left"
+                />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">Expenses</dt>
+              <dd className="mt-1">
+                <MoneyValue money={fin.expenses} align="left" />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">Cost basis</dt>
+              <dd className="mt-1 font-medium">
+                <MoneyValue money={fin.costBasis} align="left" />
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">Net proceeds</dt>
+              <dd className="mt-1">
+                {fin.isRealized ? (
+                  <MoneyValue money={fin.netProceeds} align="left" />
+                ) : (
+                  <span className="text-slate-500">—</span>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs text-slate-500">Profit</dt>
+              <dd className="mt-1">
+                <MoneyProfit money={fin.profit} align="left" />
+                {fin.roi.usd !== null ? (
+                  <span className="text-xs text-slate-500">
+                    {formatPercent(fin.roi.usd)} USD · {formatPercent(fin.roi.jpy)} JPY
+                  </span>
+                ) : null}
+              </dd>
+            </div>
+          </dl>
+
+          <p className="text-xs text-slate-500">
+            Paid in {purchase.purchaseCurrency}
+            {purchase.purchaseFxJpyPerUsd
+              ? ` at ${formatRate(purchase.purchaseFxJpyPerUsd)}`
+              : ""}
+            {purchase.certNumber ? ` · cert ${purchase.certNumber}` : ""}
+            {purchase.purchaseNotes ? ` — ${purchase.purchaseNotes}` : ""}
+          </p>
+
+          {/* --- Expenses for this copy --- */}
+          <div>
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Expenses for this copy
+            </h3>
+            {purchase.expenses.length === 0 ? (
+              <p className="mb-4 text-sm text-slate-500">
+                None yet — grading, inbound shipping, sleeves.
+              </p>
+            ) : (
+              <div className="mb-4 overflow-x-auto">
+                <table className="w-full min-w-[520px]">
+                  <tbody className="divide-y divide-slate-800/70">
+                    {purchase.expenses.map((expense) => (
+                      <tr key={expense.id}>
+                        <td className="td text-slate-400">
+                          {formatDate(expense.incurredAt)}
+                        </td>
+                        <td className="td">
+                          {EXPENSE_CATEGORY_LABELS[expense.category]}
+                        </td>
+                        <td className="td">{expense.description}</td>
+                        <td className="td text-right">
+                          <MoneyValue
+                            money={{
+                              usdCents: expense.amountUsdCents,
+                              jpyYen: expense.amountJpyYen,
+                            }}
+                            primary={expense.currency}
+                          />
+                        </td>
+                        <td className="td text-right">
+                          <DeleteButton
+                            action={deleteExpense.bind(null, expense.id)}
+                            label="Delete expense"
+                            confirmMessage="Delete this expense?"
+                            iconOnly
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="border-t border-slate-800 pt-4">
+              <ExpenseForm purchaseId={purchase.id} defaultCategory="GRADING" />
+            </div>
+          </div>
+
+          {/* --- Sale of this copy --- */}
+          <div>
+            <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Sale
+            </h3>
+            {sales.length === 0 ? (
+              <p className="mb-4 text-sm text-slate-500">Not sold yet.</p>
+            ) : (
+              <div className="mb-4 space-y-3">
+                {sales.map((sale) => (
+                  <div key={sale.id} className="rounded-lg border border-slate-800 p-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 text-base font-semibold">
+                          <MoneyValue
+                            money={{
+                              usdCents: sale.grossPriceUsdCents,
+                              jpyYen: sale.grossPriceJpyYen,
+                            }}
+                            primary={sale.currency}
+                            align="left"
+                          />
+                          {sale.wasBestOffer ? (
+                            <Chip tone="amber">Best Offer accepted</Chip>
+                          ) : null}
+                        </div>
+                        <p className="mt-1 text-sm text-slate-400">
+                          {formatDate(sale.soldAt)} on {MARKETPLACE_LABELS[sale.platform]}
+                          {` · settled in ${sale.currency}`}
+                          {sale.fxJpyPerUsd ? ` at ${formatRate(sale.fxJpyPerUsd)}` : ""}
+                        </p>
+                        {sale.wasBestOffer && sale.listedPriceUsdCents !== null ? (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Listed at{" "}
+                            {sale.currency === "JPY"
+                              ? formatJpy(sale.listedPriceJpyYen)
+                              : formatUsd(sale.listedPriceUsdCents)}{" "}
+                            — profit uses the accepted offer.
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <span className="flex flex-col items-end">
+                          <span className="text-[10px] uppercase tracking-wide text-slate-600">
+                            Net
+                          </span>
+                          <MoneyValue money={sale.net} primary={sale.currency} />
+                        </span>
+                        <DeleteButton
+                          action={deleteSale.bind(null, sale.id)}
+                          label="Delete sale"
+                          confirmMessage="Delete this sale record?"
+                          iconOnly
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="border-t border-slate-800 pt-4">
+              <SaleForm purchaseId={purchase.id} />
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}

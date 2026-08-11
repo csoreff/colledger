@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { deleteExpense } from "@/lib/actions";
 import type { Money } from "@/lib/currency";
 import { formatDate } from "@/lib/dates";
-import { EXPENSE_CATEGORY_LABELS } from "@/lib/labels";
+import { EXPENSE_CATEGORY_LABELS, gradeLabel } from "@/lib/labels";
 import { expenseMoney } from "@/lib/profit";
 import { PageHeader, StatCard } from "@/components/ui";
 import { MoneyValue } from "@/components/Money";
@@ -22,20 +22,34 @@ export default async function ExpensesPage({
   const scope = searchParams.scope === "item" ? "item" : searchParams.scope === "all" ? "all" : "general";
 
   const where =
-    scope === "general" ? { itemId: null } : scope === "item" ? { NOT: { itemId: null } } : {};
+    scope === "general"
+      ? { purchaseId: null }
+      : scope === "item"
+        ? { NOT: { purchaseId: null } }
+        : {};
 
   const [expenses, generalAgg, itemAgg] = await Promise.all([
     prisma.expense.findMany({
       where,
       orderBy: { incurredAt: "desc" },
-      include: { item: { select: { id: true, title: true } } },
+      include: {
+        purchase: {
+          select: {
+            id: true,
+            grader: true,
+            grade: true,
+            condition: true,
+            item: { select: { id: true, title: true } },
+          },
+        },
+      },
     }),
     prisma.expense.aggregate({
-      where: { itemId: null },
+      where: { purchaseId: null },
       _sum: { amountUsdCents: true, amountJpyYen: true },
     }),
     prisma.expense.aggregate({
-      where: { NOT: { itemId: null } },
+      where: { NOT: { purchaseId: null } },
       _sum: { amountUsdCents: true, amountJpyYen: true },
     }),
   ]);
@@ -58,7 +72,7 @@ export default async function ExpensesPage({
 
   const TABS = [
     { key: "general", label: "General only" },
-    { key: "item", label: "Item-specific" },
+    { key: "item", label: "Copy-specific" },
     { key: "all", label: "All" },
   ] as const;
 
@@ -66,7 +80,7 @@ export default async function ExpensesPage({
     <>
       <PageHeader
         title="Expenses"
-        subtitle="General overhead lives here. Item-specific costs are added on each item's page."
+        subtitle="General overhead lives here. Costs for a specific copy are added on that card's page."
       />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -76,9 +90,9 @@ export default async function ExpensesPage({
           hint="Not tied to any one item"
         />
         <StatCard
-          label="Item expenses"
+          label="Copy expenses"
           value={<MoneyValue money={itemTotal} align="left" />}
-          hint="Rolled into each item's cost basis"
+          hint="Rolled into each copy's cost basis"
         />
         <StatCard
           label="All expenses"
@@ -134,13 +148,22 @@ export default async function ExpensesPage({
                     <td className="td">{EXPENSE_CATEGORY_LABELS[expense.category]}</td>
                     <td className="td">{expense.description}</td>
                     <td className="td">
-                      {expense.item ? (
-                        <Link
-                          href={`/items/${expense.item.id}`}
-                          className="text-slate-300 hover:text-emerald-400"
-                        >
-                          {expense.item.title}
-                        </Link>
+                      {expense.purchase ? (
+                        <>
+                          <Link
+                            href={`/items/${expense.purchase.item.id}`}
+                            className="text-slate-300 hover:text-emerald-400"
+                          >
+                            {expense.purchase.item.title}
+                          </Link>
+                          <span className="block text-xs text-slate-500">
+                            {gradeLabel(
+                              expense.purchase.grader,
+                              expense.purchase.grade,
+                              expense.purchase.condition,
+                            )}
+                          </span>
+                        </>
                       ) : (
                         <span className="text-slate-500">General</span>
                       )}

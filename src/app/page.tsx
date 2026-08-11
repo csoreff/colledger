@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import {
-  computeItemFinancials,
   computePortfolioTotals,
+  computePurchaseFinancials,
   saleGrossMoney,
 } from "@/lib/profit";
 import { formatPercent, type Money } from "@/lib/currency";
@@ -14,14 +14,15 @@ import { MoneyProfit, MoneyValue } from "@/components/Money";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [items, generalExpenses] = await Promise.all([
-    prisma.item.findMany({ include: { expenses: true, sales: true } }),
-    prisma.expense.findMany({ where: { itemId: null } }),
+  const [purchases, generalExpenses, itemCount] = await Promise.all([
+    prisma.purchase.findMany({ include: { expenses: true, sales: true } }),
+    prisma.expense.findMany({ where: { purchaseId: null } }),
+    prisma.item.count(),
   ]);
 
-  const totals = computePortfolioTotals(items, generalExpenses);
+  const totals = computePortfolioTotals(purchases, generalExpenses, itemCount);
 
-  if (items.length === 0 && generalExpenses.length === 0) {
+  if (purchases.length === 0 && generalExpenses.length === 0) {
     return (
       <>
         <PageHeader title="Dashboard" />
@@ -37,11 +38,11 @@ export default async function DashboardPage() {
 
   // --- Profit by month, keyed off sale date ---
   const byMonth = new Map<string, { profit: Money; count: number }>();
-  for (const item of items) {
-    const fin = computeItemFinancials(item);
+  for (const purchase of purchases) {
+    const fin = computePurchaseFinancials(purchase);
     if (!fin.isRealized) continue;
-    // Attribute the whole item's profit to its most recent sale date.
-    const lastSale = item.sales.reduce((latest, sale) =>
+    // Attribute a copy's whole profit to its most recent sale date.
+    const lastSale = purchase.sales.reduce((latest, sale) =>
       sale.soldAt > latest.soldAt ? sale : latest,
     );
     const key = monthKey(lastSale.soldAt);
@@ -72,7 +73,9 @@ export default async function DashboardPage() {
   const recentSales = await prisma.sale.findMany({
     take: 8,
     orderBy: { soldAt: "desc" },
-    include: { item: { include: { expenses: true, sales: true } } },
+    include: {
+      purchase: { include: { item: true, expenses: true, sales: true } },
+    },
   });
 
   return (
@@ -97,12 +100,12 @@ export default async function DashboardPage() {
         <StatCard
           label="Sales proceeds"
           value={<MoneyValue money={totals.netProceeds} align="left" />}
-          hint={`${totals.soldCount} item${totals.soldCount === 1 ? "" : "s"} sold, after fees`}
+          hint={`${totals.soldCount} cop${totals.soldCount === 1 ? "y" : "ies"} sold, after fees`}
         />
         <StatCard
           label="Inventory cost basis"
           value={<MoneyValue money={totals.inventoryCostBasis} align="left" />}
-          hint={`${totals.unsoldCount} item${totals.unsoldCount === 1 ? "" : "s"} still held`}
+          hint={`${totals.unsoldCount} cop${totals.unsoldCount === 1 ? "y" : "ies"} still held across ${totals.itemCount} card${totals.itemCount === 1 ? "" : "s"}`}
         />
         <StatCard
           label="Return on sold"
@@ -113,7 +116,7 @@ export default async function DashboardPage() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Total spent on items" value={<MoneyValue money={totals.totalCostBasis} align="left" />} hint="Purchase price + item expenses" />
+        <StatCard label="Total spent on cards" value={<MoneyValue money={totals.totalCostBasis} align="left" />} hint="Purchase price + item expenses" />
         <StatCard label="Profit before overhead" value={<MoneyValue money={totals.grossProfit} align="left" />} hint="Sold items only" />
         <StatCard label="General expenses" value={<MoneyValue money={totals.generalExpenses} align="left" />} hint="Not tied to any one item" />
       </div>
@@ -203,16 +206,21 @@ export default async function DashboardPage() {
               </thead>
               <tbody className="divide-y divide-slate-800/70">
                 {recentSales.map((sale) => {
-                  const fin = computeItemFinancials(sale.item);
+                  const fin = computePurchaseFinancials(sale.purchase);
+                  const item = sale.purchase.item;
                   return (
                     <tr key={sale.id} className="hover:bg-slate-800/30">
                       <td className="td">
-                        <Link href={`/items/${sale.itemId}`} className="hover:text-emerald-400">
-                          {sale.item.title}
+                        <Link href={`/items/${item.id}`} className="hover:text-emerald-400">
+                          {item.title}
                         </Link>
                         <p className="text-xs text-slate-500">
-                          {ITEM_TYPE_LABELS[sale.item.type]} ·{" "}
-                          {gradeLabel(sale.item.grader, sale.item.grade, sale.item.condition)}
+                          {ITEM_TYPE_LABELS[item.type]} ·{" "}
+                          {gradeLabel(
+                            sale.purchase.grader,
+                            sale.purchase.grade,
+                            sale.purchase.condition,
+                          )}
                         </p>
                       </td>
                       <td className="td text-slate-400">{formatDate(sale.soldAt)}</td>
