@@ -1,4 +1,5 @@
 import type { Grader } from "@prisma/client";
+import { GRADERS_WITH_PLUS_GRADE } from "@/lib/labels";
 import {
   CompProviderError,
   type CompProvider,
@@ -81,13 +82,21 @@ function buildKeywords(query: CompQuery): string {
 // Grades run 1–10 and carry one optional decimal. CGC in particular uses 9.8
 // and 9.6, so this must not be limited to half-point steps.
 const GRADE_NUMBER = String.raw`(10(?:\.0)?|[1-9](?:\.\d)?)`;
+// ARS sits a 10+ above its 10, so the plus must be tried before a bare 10 or
+// "ARS 10+" would capture just "10".
+const GRADE_NUMBER_WITH_PLUS = String.raw`(10\+|10(?:\.0)?|[1-9](?:\.\d)?)`;
 
 const GRADER_PATTERNS: Array<{ grader: Grader; re: RegExp }> = (
-  ["PSA", "BGS", "CGC", "SGC", "TAG", "ACE"] as const
-).map((grader) => ({
-  grader,
-  re: new RegExp(String.raw`\b${grader}\s*${GRADE_NUMBER}(?![\d.])`, "i"),
-}));
+  ["PSA", "BGS", "CGC", "SGC", "TAG", "ACE", "ARS"] as const
+).map((grader) => {
+  const number = GRADERS_WITH_PLUS_GRADE.includes(grader)
+    ? GRADE_NUMBER_WITH_PLUS
+    : GRADE_NUMBER;
+  return {
+    grader,
+    re: new RegExp(String.raw`\b${grader}\s*${number}(?![\d.])`, "i"),
+  };
+});
 
 /** Best-effort grade extraction from a listing title. */
 export function inferGradeFromTitle(title: string): { grader: Grader; grade: string | null } {

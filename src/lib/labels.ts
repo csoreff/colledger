@@ -27,8 +27,30 @@ export const GRADER_LABELS: Record<Grader, string> = {
   SGC: "SGC",
   TAG: "TAG",
   ACE: "ACE",
+  ARS: "ARS",
   OTHER: "Other grader",
 };
+
+/// Graders whose scale tops out above a plain 10. ARS awards 10+ above its 10.
+export const GRADERS_WITH_PLUS_GRADE: Grader[] = ["ARS"];
+
+export function maxGradeLabel(grader: Grader): string | null {
+  if (grader === "RAW" || grader === "OTHER") return null;
+  return GRADERS_WITH_PLUS_GRADE.includes(grader) ? "10+" : "10";
+}
+
+const COMMON_GRADES = [
+  "10", "9.9", "9.8", "9.6", "9.5", "9", "8.5", "8", "7.5", "7", "6.5", "6",
+  "5.5", "5", "4.5", "4", "3.5", "3", "2.5", "2", "1.5", "1",
+];
+
+/// Suggestions only — the grade field stays free text, since scales vary.
+export function gradeOptionsFor(grader: Grader): string[] {
+  if (grader === "RAW") return [];
+  return GRADERS_WITH_PLUS_GRADE.includes(grader)
+    ? ["10+", ...COMMON_GRADES]
+    : COMMON_GRADES;
+}
 
 export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
   SHIPPING_IN: "Shipping in",

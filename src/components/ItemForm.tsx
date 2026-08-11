@@ -8,8 +8,10 @@ import type { ActionState } from "@/lib/actions";
 import { centsToInputValue } from "@/lib/money";
 import { todayInputValue, toDateInputValue } from "@/lib/dates";
 import {
+  gradeOptionsFor,
   GRADER_LABELS,
   GRADERS,
+  maxGradeLabel,
   ITEM_STATUS_LABELS,
   ITEM_STATUSES,
   ITEM_TYPE_LABELS,
@@ -42,6 +44,8 @@ export function ItemForm({
   const [type, setType] = useState(item?.type ?? "CARD");
 
   const isGraded = grader !== "RAW";
+  const maxGrade = maxGradeLabel(grader);
+  const gradeOptions = gradeOptionsFor(grader);
 
   return (
     <form action={formAction} className="space-y-6">
@@ -158,13 +162,24 @@ export function ItemForm({
 
           {isGraded ? (
             <>
-              <Field label="Grade">
+              <Field
+                label="Grade"
+                hint={
+                  maxGrade ? `Scale runs up to ${maxGrade}.` : undefined
+                }
+              >
                 <input
                   name="grade"
                   defaultValue={item?.grade ?? ""}
-                  placeholder="10"
+                  placeholder={maxGrade ?? "10"}
                   className="input"
+                  list="grade-options"
                 />
+                <datalist id="grade-options">
+                  {gradeOptions.map((g) => (
+                    <option key={g} value={g} />
+                  ))}
+                </datalist>
               </Field>
               <Field label="Cert number">
                 <input

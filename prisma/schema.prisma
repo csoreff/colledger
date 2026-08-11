@@ -35,6 +35,7 @@ enum Grader {
   SGC
   TAG
   ACE
+  ARS
   OTHER
 }
 
