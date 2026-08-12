@@ -40,6 +40,13 @@ its price is the **total for the row, not per card**. Counts shown as "held" and
 "sold" are **cards**, not rows — a card with 18 purchase rows totalling 40
 copies reads "40 held · across 18 purchases".
 
+**Sorting** — every column on the collection list except "Grades held" is
+sortable: click a heading to sort, click again to flip. Money columns sort by
+their **USD** value, since a single ordering has to pick a currency and the rate
+moved between purchases. Cards with nothing sold sink to the bottom of a profit
+sort in both directions rather than leading the ascending one. Sort and filters
+are independent — changing one keeps the other.
+
 **Where you bought and sold** — eBay, SNKRDUNK, PayPay Flea Market / Yahoo Flea,
 Yahoo Auctions, Mercari, TCGplayer, Whatnot, Amazon, Facebook, local, and shows.
 The collection list filters by source. Picking a Japanese marketplace defaults
