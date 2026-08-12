@@ -106,11 +106,16 @@ export function computePurchaseFinancials(
 
 /** Item-level rollup across every copy you've bought of one card. */
 export type ItemRollup = {
+  /** Number of purchase rows. */
   copies: number;
-  /** Sum of `quantity` across rows — actual physical count. */
+  /** Sum of `quantity` across all rows — the physical card count. */
   units: number;
+  /** Rows that have sold / are still held. */
   soldCount: number;
   heldCount: number;
+  /** Cards sold / still held. These are what a collector means by "how many". */
+  soldUnits: number;
+  heldUnits: number;
 
   costBasis: Money;
   /** Cost basis still sitting in unsold copies. */
@@ -129,6 +134,8 @@ export function computeItemRollup(item: ItemWithPurchases): ItemRollup {
   let soldCostBasis = ZERO_MONEY;
   let soldCount = 0;
   let heldCount = 0;
+  let soldUnits = 0;
+  let heldUnits = 0;
   let units = 0;
 
   for (const purchase of item.purchases) {
@@ -138,11 +145,13 @@ export function computeItemRollup(item: ItemWithPurchases): ItemRollup {
 
     if (fin.isRealized) {
       soldCount += 1;
+      soldUnits += purchase.quantity;
       soldCostBasis = addMoney(soldCostBasis, fin.costBasis);
       netProceeds = addMoney(netProceeds, fin.netProceeds);
       realizedProfit = addMoney(realizedProfit, fin.profit ?? ZERO_MONEY);
     } else if (purchase.status !== "LOST") {
       heldCount += 1;
+      heldUnits += purchase.quantity;
       inventoryCostBasis = addMoney(inventoryCostBasis, fin.costBasis);
     }
   }
@@ -152,6 +161,8 @@ export function computeItemRollup(item: ItemWithPurchases): ItemRollup {
     units,
     soldCount,
     heldCount,
+    soldUnits,
+    heldUnits,
     costBasis,
     inventoryCostBasis,
     netProceeds,
@@ -166,8 +177,12 @@ export function computeItemRollup(item: ItemWithPurchases): ItemRollup {
 export type PortfolioTotals = {
   itemCount: number;
   purchaseCount: number;
+  /** Purchase rows sold / still held. */
   soldCount: number;
   unsoldCount: number;
+  /** Cards sold / still held, counting each row's quantity. */
+  soldUnits: number;
+  heldUnits: number;
 
   totalCostBasis: Money;
   inventoryCostBasis: Money;
@@ -193,6 +208,8 @@ export function computePortfolioTotals(
   let grossProfit = ZERO_MONEY;
   let soldCostBasis = ZERO_MONEY;
   let soldCount = 0;
+  let soldUnits = 0;
+  let heldUnits = 0;
 
   for (const purchase of purchases) {
     const fin = computePurchaseFinancials(purchase);
@@ -200,10 +217,12 @@ export function computePortfolioTotals(
 
     if (fin.isRealized) {
       soldCount += 1;
+      soldUnits += purchase.quantity;
       soldCostBasis = addMoney(soldCostBasis, fin.costBasis);
       netProceeds = addMoney(netProceeds, fin.netProceeds);
       grossProfit = addMoney(grossProfit, fin.profit ?? ZERO_MONEY);
     } else if (purchase.status !== "LOST") {
+      heldUnits += purchase.quantity;
       inventoryCostBasis = addMoney(inventoryCostBasis, fin.costBasis);
     }
   }
@@ -216,6 +235,8 @@ export function computePortfolioTotals(
     purchaseCount: purchases.length,
     soldCount,
     unsoldCount: purchases.length - soldCount,
+    soldUnits,
+    heldUnits,
     totalCostBasis,
     inventoryCostBasis,
     netProceeds,

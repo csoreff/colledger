@@ -177,7 +177,7 @@ export default async function ItemsPage({
             <thead className="border-b border-slate-800">
               <tr>
                 <th className="th">Card</th>
-                <th className="th">Copies</th>
+                <th className="th">Cards</th>
                 <th className="th">Grades held</th>
                 <th className="th">First bought</th>
                 <th className="th text-right">Cost basis</th>
@@ -217,13 +217,19 @@ export default async function ItemsPage({
                     </td>
                     <td className="td">
                       <span className="flex flex-wrap gap-1">
-                        {rollup.heldCount > 0 ? (
-                          <Chip tone="sky">{rollup.heldCount} held</Chip>
+                        {rollup.heldUnits > 0 ? (
+                          <Chip tone="sky">{rollup.heldUnits} held</Chip>
                         ) : null}
-                        {rollup.soldCount > 0 ? (
-                          <Chip tone="emerald">{rollup.soldCount} sold</Chip>
+                        {rollup.soldUnits > 0 ? (
+                          <Chip tone="emerald">{rollup.soldUnits} sold</Chip>
                         ) : null}
                       </span>
+                      {rollup.units !== rollup.copies ? (
+                        <p className="mt-1 text-xs text-slate-500">
+                          across {rollup.copies} purchase
+                          {rollup.copies === 1 ? "" : "s"}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="td text-xs text-slate-400">
                       {grades.slice(0, 3).join(" · ")}

@@ -36,7 +36,9 @@ ARS is the one grader whose scale runs to **10+**; the form shows each grader's
 ceiling.
 
 A row's **quantity** means "this one purchase covered N identical copies", and
-its price is the **total for the row, not per card**.
+its price is the **total for the row, not per card**. Counts shown as "held" and
+"sold" are **cards**, not rows — a card with 18 purchase rows totalling 40
+copies reads "40 held · across 18 purchases".
 
 **Where you bought and sold** — eBay, SNKRDUNK, PayPay Flea Market / Yahoo Flea,
 Yahoo Auctions, Mercari, TCGplayer, Whatnot, Amazon, Facebook, local, and shows.

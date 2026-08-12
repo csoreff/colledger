@@ -83,12 +83,14 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
       <section className="card mb-6">
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <Chip>
+            {rollup.units} card{rollup.units === 1 ? "" : "s"}
+          </Chip>
+          <Chip>
             {rollup.copies} purchase{rollup.copies === 1 ? "" : "s"}
           </Chip>
-          {rollup.units !== rollup.copies ? <Chip>{rollup.units} units</Chip> : null}
-          <Chip tone={rollup.heldCount > 0 ? "sky" : "slate"}>{rollup.heldCount} held</Chip>
-          <Chip tone={rollup.soldCount > 0 ? "emerald" : "slate"}>
-            {rollup.soldCount} sold
+          <Chip tone={rollup.heldUnits > 0 ? "sky" : "slate"}>{rollup.heldUnits} held</Chip>
+          <Chip tone={rollup.soldUnits > 0 ? "emerald" : "slate"}>
+            {rollup.soldUnits} sold
           </Chip>
         </div>
 

@@ -75,7 +75,11 @@ export function PurchaseCard({
           <span className="flex flex-col">
             <span className="text-sm text-slate-200">
               {gradeLabel(purchase.grader, purchase.grade, purchase.condition)}
-              {purchase.quantity > 1 ? ` · ×${purchase.quantity}` : ""}
+              {purchase.quantity > 1 ? (
+                <span className="ml-2 rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300">
+                  ×{purchase.quantity} cards
+                </span>
+              ) : null}
             </span>
             <span className="text-xs text-slate-500">
               {formatDate(purchase.acquiredAt)} ·{" "}

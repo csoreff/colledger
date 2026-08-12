@@ -100,12 +100,12 @@ export default async function DashboardPage() {
         <StatCard
           label="Sales proceeds"
           value={<MoneyValue money={totals.netProceeds} align="left" />}
-          hint={`${totals.soldCount} cop${totals.soldCount === 1 ? "y" : "ies"} sold, after fees`}
+          hint={`${totals.soldUnits} card${totals.soldUnits === 1 ? "" : "s"} sold, after fees`}
         />
         <StatCard
           label="Inventory cost basis"
           value={<MoneyValue money={totals.inventoryCostBasis} align="left" />}
-          hint={`${totals.unsoldCount} cop${totals.unsoldCount === 1 ? "y" : "ies"} still held across ${totals.itemCount} card${totals.itemCount === 1 ? "" : "s"}`}
+          hint={`${totals.heldUnits} card${totals.heldUnits === 1 ? "" : "s"} held across ${totals.itemCount} title${totals.itemCount === 1 ? "" : "s"}`}
         />
         <StatCard
           label="Return on sold"
