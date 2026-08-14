@@ -25,10 +25,15 @@ const OAUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token";
 const SEARCH_URL = "https://api.ebay.com/buy/marketplace_insights/v1_beta/item_sales/search";
 const SCOPE = "https://api.ebay.com/oauth/api_scope/buy.marketplace.insights";
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+// Keyed by client id so swapping credentials cannot serve a stale token.
+let cachedToken: { key: string; token: string; expiresAt: number } | null = null;
 
 async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
+  if (
+    cachedToken &&
+    cachedToken.key === clientId &&
+    cachedToken.expiresAt > Date.now() + 60_000
+  ) {
     return cachedToken.token;
   }
 
@@ -44,17 +49,36 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
   });
 
   const body = (await res.json().catch(() => null)) as
-    | { access_token?: string; expires_in?: number; error_description?: string }
+    | {
+        access_token?: string;
+        expires_in?: number;
+        error?: string;
+        error_description?: string;
+      }
     | null;
 
   if (!res.ok || !body?.access_token) {
+    // `invalid_scope` is the normal answer for a keyset that authenticates
+    // correctly but has never been granted sold-data access. Saying "OAuth
+    // failed" there sends you off checking credentials that are already fine.
+    if (body?.error === "invalid_scope") {
+      throw new CompProviderError(
+        "Your eBay credentials are valid, but this keyset has not been granted " +
+          "the buy.marketplace.insights scope, which is the only source of true " +
+          "sold prices. eBay gates it behind a separate business application. " +
+          "Until it is granted, add comps by hand below.",
+      );
+    }
     throw new CompProviderError(
-      `eBay OAuth failed (${res.status}). ${body?.error_description ?? ""}`.trim() +
-        " Confirm your keyset has the buy.marketplace.insights scope granted.",
+      `eBay OAuth failed (${res.status}).` +
+        (body?.error_description ? ` ${body.error_description}` : "") +
+        " Check EBAY_CLIENT_ID and EBAY_CLIENT_SECRET — the secret is the Cert ID " +
+        "from your keyset, not a user access token.",
     );
   }
 
   cachedToken = {
+    key: clientId,
     token: body.access_token,
     expiresAt: Date.now() + (body.expires_in ?? 7200) * 1000,
   };
@@ -146,13 +170,42 @@ export class EbayApiCompProvider implements CompProvider {
   readonly label = "eBay Marketplace Insights API";
   readonly resolvesBestOffer = true;
 
-  private clientId = process.env.EBAY_CLIENT_ID ?? "";
-  private clientSecret = process.env.EBAY_CLIENT_SECRET ?? "";
-  private marketplaceId = process.env.EBAY_MARKETPLACE_ID || "EBAY_US";
+  // Read at call time, not in a field initializer. The provider is constructed
+  // once at module load, so initializers would freeze whatever the environment
+  // held then — editing .env would appear to do nothing until a full restart.
+  private get clientId() {
+    return process.env.EBAY_CLIENT_ID ?? "";
+  }
+  private get clientSecret() {
+    return process.env.EBAY_CLIENT_SECRET ?? "";
+  }
+  private get marketplaceId() {
+    return process.env.EBAY_MARKETPLACE_ID || "EBAY_US";
+  }
 
   unavailableReason(): string | null {
-    if (!this.clientId || !this.clientSecret) {
-      return "EBAY_CLIENT_ID / EBAY_CLIENT_SECRET are not set in .env.";
+    const { clientId, clientSecret } = this;
+
+    if (!clientId && !clientSecret) {
+      return "EBAY_CLIENT_ID and EBAY_CLIENT_SECRET are not set in .env.";
+    }
+    if (!clientId) return "EBAY_CLIENT_ID is not set in .env.";
+    if (!clientSecret) return "EBAY_CLIENT_SECRET is not set in .env.";
+
+    // A user access token is easy to grab by mistake: it sits right next to the
+    // credentials in eBay's portal, but it is not what client_credentials wants.
+    if (clientSecret.startsWith("v^1.")) {
+      return (
+        "EBAY_CLIENT_SECRET looks like a user access token (it starts with " +
+        '"v^1." and is very long), not a client secret. Use the Cert ID from ' +
+        "your eBay application keyset — it looks like PRD-… or SBX-…."
+      );
+    }
+    if (!/-(PRD|SBX)-/.test(clientId)) {
+      return (
+        "EBAY_CLIENT_ID does not look like an eBay App ID. It should contain " +
+        "-PRD- (production) or -SBX- (sandbox)."
+      );
     }
     return null;
   }
