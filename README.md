@@ -140,14 +140,27 @@ worth being precise about, because it constrains the design:
   Cloudflare JavaScript challenge. Getting through it means defeating an
   anti-bot control, so this app doesn't attempt it.
 
-That leaves one legitimate route to the real number: eBay's **Marketplace
-Insights API**. It reports `lastSoldPrice` — the amount actually transacted,
-which for a Best Offer listing *is* the accepted offer. Comps from it are marked
-confirmed.
+That leaves one route to the real number: eBay's **Marketplace Insights API**.
+It reports `lastSoldPrice` — the amount actually transacted, which for a Best
+Offer listing *is* the accepted offer. Comps from it are marked confirmed.
 
-The catch: eBay gates the `buy.marketplace.insights` scope behind a business
-approval request. A new developer keyset doesn't have it. Until yours does, the
-comps page tells you exactly what's missing and manual entry still works.
+The catch, verified against a live production keyset in August 2026: the
+`buy.marketplace.insights` scope returns `invalid_scope`. It is a Limited
+Release API and eBay's own documentation states it is restricted and **not open
+to new users**. So the integration is built and works the moment a keyset is
+granted the scope, but that grant is not currently obtainable by applying.
+
+The other routes are closed rather than merely inconvenient:
+
+| Route | State (Aug 2026) |
+|---|---|
+| Marketplace Insights API | `invalid_scope` — Limited Release, closed to new users |
+| Finding API `findCompletedItems` | Restricted Oct 2020, API decommissioned Feb 2025 — endpoint returns HTTP 418 |
+| Browse API | Active listings only; no sold data |
+| eBay sold-search pages | Bot-blocked to scripted access |
+| 130point.com | Cloudflare JS challenge |
+
+Which is why manual entry is the working path, not a placeholder.
 
 ### Providers
 

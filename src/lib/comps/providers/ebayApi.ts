@@ -18,7 +18,17 @@ import {
  * That is why every result from this provider is marked priceIsConfirmed.
  *
  * Access requires eBay to grant the `buy.marketplace.insights` scope to your
- * application; it is not enabled by default on a new developer keyset.
+ * application. It is a Limited Release API; as of August 2026 eBay's docs state
+ * it is restricted and not open to new users, and a standard developer keyset
+ * gets `invalid_scope`. Verified against a live production keyset.
+ *
+ * The other routes are closed too, so this is not a matter of picking a
+ * different endpoint:
+ *   - Finding API `findCompletedItems` — the classic sold-comp call. Restricted
+ *     from Oct 2020, whole API decommissioned Feb 2025; the endpoint now answers
+ *     HTTP 418 with an empty body.
+ *   - Browse API — active listings only, no sold data at all.
+ *   - eBay's own sold-listing search pages block scripted access.
  */
 
 const OAUTH_URL = "https://api.ebay.com/identity/v1/oauth2/token";
@@ -63,10 +73,11 @@ async function getAccessToken(clientId: string, clientSecret: string): Promise<s
     // failed" there sends you off checking credentials that are already fine.
     if (body?.error === "invalid_scope") {
       throw new CompProviderError(
-        "Your eBay credentials are valid, but this keyset has not been granted " +
-          "the buy.marketplace.insights scope, which is the only source of true " +
-          "sold prices. eBay gates it behind a separate business application. " +
-          "Until it is granted, add comps by hand below.",
+        "Your eBay credentials are valid — they authenticate fine. What is " +
+          "missing is the buy.marketplace.insights scope, the only remaining " +
+          "eBay source of true sold prices. It is a Limited Release API that " +
+          "eBay's own docs describe as not open to new users, so this is not " +
+          "something wrong with your account or keys. Record comps by hand below.",
       );
     }
     throw new CompProviderError(
