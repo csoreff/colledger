@@ -15,7 +15,6 @@ import {
 } from "@/lib/currency";
 import { formatDate } from "@/lib/dates";
 import {
-  EXPENSE_CATEGORY_LABELS,
   gradeLabel,
   ITEM_STATUS_LABELS,
   MARKETPLACE_LABELS,
@@ -24,6 +23,7 @@ import { Chip } from "@/components/ui";
 import { MoneyProfit, MoneyValue } from "@/components/Money";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ExpenseForm } from "@/components/ExpenseForm";
+import { ExpenseRow } from "@/components/ExpenseRow";
 import { SaleForm } from "@/components/SaleForm";
 
 type SaleSummary = Sale & { net: Money };
@@ -210,32 +210,12 @@ export function PurchaseCard({
                 <table className="w-full min-w-[520px]">
                   <tbody className="divide-y divide-slate-800/70">
                     {purchase.expenses.map((expense) => (
-                      <tr key={expense.id}>
-                        <td className="td text-slate-400">
-                          {formatDate(expense.incurredAt)}
-                        </td>
-                        <td className="td">
-                          {EXPENSE_CATEGORY_LABELS[expense.category]}
-                        </td>
-                        <td className="td">{expense.description}</td>
-                        <td className="td text-right">
-                          <MoneyValue
-                            money={{
-                              usdCents: expense.amountUsdCents,
-                              jpyYen: expense.amountJpyYen,
-                            }}
-                            primary={expense.currency}
-                          />
-                        </td>
-                        <td className="td text-right">
-                          <DeleteButton
-                            action={deleteExpense.bind(null, expense.id)}
-                            label="Delete expense"
-                            confirmMessage="Delete this expense?"
-                            iconOnly
-                          />
-                        </td>
-                      </tr>
+                      <ExpenseRow
+                        key={expense.id}
+                        expense={expense}
+                        deleteAction={deleteExpense.bind(null, expense.id)}
+                        showVendor={false}
+                      />
                     ))}
                   </tbody>
                 </table>

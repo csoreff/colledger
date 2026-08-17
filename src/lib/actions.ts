@@ -463,13 +463,20 @@ const expenseSchema = z.object({
   notes: z.string().nullable(),
 });
 
-export async function createExpense(
-  _prev: ActionState,
+/**
+ * Parses an expense form into database columns. Shared by create and update so
+ * the two cannot drift apart in validation or FX handling.
+ *
+ * The rate is resolved from the submitted date every time, so editing an
+ * expense's date re-converts it at the rate for the new date rather than
+ * leaving a figure converted at the old one.
+ */
+async function parseExpenseForm(
   form: FormData,
-): Promise<ActionState> {
+): Promise<{ data: Record<string, unknown> } | { error: string }> {
   const incurredAt = parseDateInput(str(form, "incurredAt"));
   const currency = currencyOf(form);
-  const resolver = await moneyResolver(incurredAt ?? new Date());
+  const resolver = await moneyResolver(incurredAt ?? new Date(), currency);
   const amount = resolver.resolve(form, "amount", currency);
 
   if (!amount) return { error: "Enter the amount in USD or JPY." };
@@ -491,21 +498,55 @@ export async function createExpense(
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   if (resolver.needsRate) return { error: resolver.rateError ?? "Exchange rate unavailable." };
 
-  await prisma.expense.create({
-    data: { ...parsed.data, ...fxColumns(resolver) } as never,
-  });
+  return { data: { ...parsed.data, ...fxColumns(resolver) } };
+}
 
+function revalidateExpenseViews() {
   revalidatePath("/");
   revalidatePath("/expenses");
   revalidatePath("/items", "layout");
+}
+
+export async function createExpense(
+  _prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const parsed = await parseExpenseForm(form);
+  if ("error" in parsed) return { error: parsed.error };
+
+  await prisma.expense.create({ data: parsed.data as never });
+
+  revalidateExpenseViews();
+  return { ok: true };
+}
+
+/**
+ * Edits an existing expense. Which purchase it belongs to (or that it is a
+ * general expense) is deliberately left alone — the form does not offer to
+ * move it, so an absent purchaseId must not be read as "detach".
+ */
+export async function updateExpense(
+  expenseId: string,
+  _prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const existing = await prisma.expense.findUnique({ where: { id: expenseId } });
+  if (!existing) return { error: "That expense no longer exists." };
+
+  const parsed = await parseExpenseForm(form);
+  if ("error" in parsed) return { error: parsed.error };
+
+  const fields = { ...(parsed.data as Record<string, unknown>) };
+  delete fields.purchaseId;
+  await prisma.expense.update({ where: { id: expenseId }, data: fields as never });
+
+  revalidateExpenseViews();
   return { ok: true };
 }
 
 export async function deleteExpense(expenseId: string): Promise<void> {
   await prisma.expense.delete({ where: { id: expenseId } });
-  revalidatePath("/");
-  revalidatePath("/expenses");
-  revalidatePath("/items", "layout");
+  revalidateExpenseViews();
 }
 
 // ---------------------------------------------------------------------------

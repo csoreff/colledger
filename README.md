@@ -53,8 +53,13 @@ The collection list filters by source. Picking a Japanese marketplace defaults
 the currency to yen.
 
 **Expenses** — a purchase can have as many as you like: grading, inbound
-shipping, sleeves, whatever. Each rolls into that copy's cost basis. Expenses
-with no purchase attached are **general expenses** — supplies, subscriptions, show admission,
+shipping, sleeves, whatever. Each rolls into that copy's cost basis. Any expense
+can be edited in place from either the expenses page or the card it belongs to —
+the pencil icon expands the row into a form. Changing an expense's date
+re-converts it at the rate for the new date, rather than leaving a figure
+converted at the old one. Which purchase an expense belongs to is not editable;
+delete and re-add to move one. Expenses with no purchase attached are
+**general expenses** — supplies, subscriptions, show admission,
 mileage — tracked separately and subtracted from overall profit rather than from
 any single item. `/expenses` filters between the two.
 
@@ -97,8 +102,10 @@ Amounts are formatted with an explicit symbol rather than left to `Intl`, which
 renders AUD as a bare `$` in a US locale and would be indistinguishable from
 USD.
 
-Sales and expenses currently accept USD and JPY; say the word and the same
-treatment extends to them.
+Sales, expenses and manual comps accept USD and JPY only. They have nowhere to
+record a native GBP/AUD figure, so offering those would silently discard what
+was actually paid — say the word and the same native-amount treatment extends
+to them.
 
 Each record also stores **the currency it actually settled in and the FX rate on
 its own transaction date**. That matters more than it sounds: a card bought on

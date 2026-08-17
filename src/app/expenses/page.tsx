@@ -2,13 +2,10 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { deleteExpense } from "@/lib/actions";
 import type { Money } from "@/lib/currency";
-import { formatDate } from "@/lib/dates";
-import { EXPENSE_CATEGORY_LABELS, gradeLabel } from "@/lib/labels";
-import { expenseMoney } from "@/lib/profit";
 import { PageHeader, StatCard } from "@/components/ui";
 import { MoneyValue } from "@/components/Money";
-import { DeleteButton } from "@/components/DeleteButton";
 import { ExpenseForm } from "@/components/ExpenseForm";
+import { ExpenseRow } from "@/components/ExpenseRow";
 
 export const dynamic = "force-dynamic";
 
@@ -80,7 +77,7 @@ export default async function ExpensesPage({
     <>
       <PageHeader
         title="Expenses"
-        subtitle="General overhead lives here. Costs for a specific copy are added on that card's page."
+        subtitle="General overhead lives here. Costs for a specific copy are added on that card's page. Click the pencil to edit any row."
       />
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -143,44 +140,12 @@ export default async function ExpensesPage({
               </thead>
               <tbody className="divide-y divide-slate-800/70">
                 {expenses.map((expense) => (
-                  <tr key={expense.id} className="hover:bg-slate-800/30">
-                    <td className="td text-slate-400">{formatDate(expense.incurredAt)}</td>
-                    <td className="td">{EXPENSE_CATEGORY_LABELS[expense.category]}</td>
-                    <td className="td">{expense.description}</td>
-                    <td className="td">
-                      {expense.purchase ? (
-                        <>
-                          <Link
-                            href={`/items/${expense.purchase.item.id}`}
-                            className="text-slate-300 hover:text-emerald-400"
-                          >
-                            {expense.purchase.item.title}
-                          </Link>
-                          <span className="block text-xs text-slate-500">
-                            {gradeLabel(
-                              expense.purchase.grader,
-                              expense.purchase.grade,
-                              expense.purchase.condition,
-                            )}
-                          </span>
-                        </>
-                      ) : (
-                        <span className="text-slate-500">General</span>
-                      )}
-                    </td>
-                    <td className="td text-slate-400">{expense.vendor ?? "—"}</td>
-                    <td className="td text-right">
-                      <MoneyValue money={expenseMoney(expense)} primary={expense.currency} />
-                    </td>
-                    <td className="td text-right">
-                      <DeleteButton
-                        action={deleteExpense.bind(null, expense.id)}
-                        label="Delete expense"
-                        confirmMessage="Delete this expense?"
-                        iconOnly
-                      />
-                    </td>
-                  </tr>
+                  <ExpenseRow
+                    key={expense.id}
+                    expense={expense}
+                    deleteAction={deleteExpense.bind(null, expense.id)}
+                    showAppliesTo
+                  />
                 ))}
               </tbody>
               <tfoot className="border-t border-slate-800">
