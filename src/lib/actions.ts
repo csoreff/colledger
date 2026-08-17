@@ -8,8 +8,12 @@ import { prisma } from "@/lib/prisma";
 import { parseDateInput } from "@/lib/dates";
 import { FxUnavailableError, getRateForDate, type FxLookup } from "@/lib/fx";
 import {
+  CURRENCIES,
+  isReportingCurrency,
   makeMoney,
+  nativeToMoney,
   parseJpyToYen,
+  parseToMinor,
   parseUsdToCents,
   ZERO_MONEY,
   type Money,
@@ -40,7 +44,11 @@ function optionalStr(form: FormData, key: string): string | null {
 }
 
 function currencyOf(form: FormData, key = "currency"): Currency {
-  return str(form, key) === "JPY" ? "JPY" : "USD";
+  const value = str(form, key);
+  // Validate against the full list rather than testing for JPY: when this only
+  // knew about USD and JPY, a GBP submission fell through to USD and the
+  // currency was silently lost while the converted amounts still looked right.
+  return CURRENCIES.includes(value as Currency) ? (value as Currency) : "USD";
 }
 
 // ---------------------------------------------------------------------------
@@ -52,6 +60,16 @@ function currencyOf(form: FormData, key = "currency"): Currency {
 // is computed here from the rate for that date, so the pair is always complete.
 // ---------------------------------------------------------------------------
 
+/** An amount plus, when it settled in GBP/AUD, the native figure behind it. */
+export type ResolvedAmount = {
+  money: Money;
+  /** Minor units of the transaction currency; null for USD/JPY, which are
+   *  already carried by `money`. */
+  nativeMinor: number | null;
+  /** Units of the transaction currency per 1 USD on that date. */
+  nativePerUsd: number | null;
+};
+
 type MoneyResolver = {
   rate: FxLookup | null;
   rateError: string | null;
@@ -59,15 +77,24 @@ type MoneyResolver = {
   resolve(form: FormData, name: string, currency: Currency): Money | null;
   /** Same, but zero when absent. */
   resolveOrZero(form: FormData, name: string, currency: Currency): Money;
+  /** Resolves an amount that may have settled in GBP or AUD. */
+  resolveNative(
+    form: FormData,
+    name: string,
+    currency: Currency,
+  ): ResolvedAmount | null;
   /** True when some field still needs a rate we don't have. */
   needsRate: boolean;
 };
 
-async function moneyResolver(date: Date): Promise<MoneyResolver> {
+async function moneyResolver(
+  date: Date,
+  currency: Currency = "JPY",
+): Promise<MoneyResolver> {
   let rate: FxLookup | null = null;
   let rateError: string | null = null;
   try {
-    rate = await getRateForDate(date);
+    rate = await getRateForDate(date, currency);
   } catch (error) {
     rateError = error instanceof FxUnavailableError ? error.message : "Exchange rate unavailable.";
   }
@@ -94,6 +121,47 @@ async function moneyResolver(date: Date): Promise<MoneyResolver> {
     },
     resolveOrZero(form, name, currency) {
       return resolver.resolve(form, name, currency) ?? ZERO_MONEY;
+    },
+    resolveNative(form, name, currency) {
+      // USD and JPY are already the reporting pair, so there is no separate
+      // native figure to keep.
+      if (isReportingCurrency(currency)) {
+        const money = resolver.resolve(form, name, currency);
+        return money
+          ? {
+              money,
+              nativeMinor: currency === "JPY" ? money.jpyYen : money.usdCents,
+              nativePerUsd: currency === "JPY" ? (rate?.jpyPerUsd ?? null) : 1,
+            }
+          : null;
+      }
+
+      const nativeMinor = parseToMinor(str(form, `${name}Native`), currency);
+      const usdCents = parseUsdToCents(str(form, `${name}Usd`));
+      const jpyYen = parseJpyToYen(str(form, `${name}Jpy`));
+      if (nativeMinor === null && usdCents === null && jpyYen === null) return null;
+
+      const nativePerUsd = rate?.rates?.[currency] ?? null;
+
+      // Typed USD/JPY figures win — a marketplace's own conversion beats a
+      // mid-market rate, and this is the fallback when no rate is published.
+      if (usdCents !== null && jpyYen !== null) {
+        return { money: { usdCents, jpyYen }, nativeMinor, nativePerUsd };
+      }
+
+      if (nativeMinor !== null && rate?.rates) {
+        const money = nativeToMoney({ minor: nativeMinor, currency }, rate.rates);
+        if (money) return { money, nativeMinor, nativePerUsd };
+      }
+
+      // Only a partial figure and no usable rate: keep what was typed rather
+      // than inventing the rest, and let the caller report it.
+      resolver.needsRate = true;
+      return {
+        money: { usdCents: usdCents ?? 0, jpyYen: jpyYen ?? 0 },
+        nativeMinor,
+        nativePerUsd,
+      };
     },
   };
 
@@ -165,6 +233,8 @@ export type PurchaseInput = {
   purchaseCurrency: Currency;
   purchaseUsdCents: number;
   purchaseJpyYen: number;
+  purchaseNativeMinor: number | null;
+  purchaseFxNativePerUsd: number | null;
   purchaseFxJpyPerUsd: number | null;
   purchaseFxDate: Date | null;
   purchaseNotes: string | null;
@@ -184,13 +254,24 @@ async function buildPurchaseRow(
   if (!acquiredAt) return { error: `${label}: a valid purchase date is required.` };
 
   const currency = currencyOf(form, field("purchaseCurrency"));
-  const resolver = await moneyResolver(acquiredAt);
-  const money = resolver.resolve(form, field("purchase"), currency);
-  if (!money) return { error: `${label}: enter the price in USD or JPY.` };
-  if (resolver.needsRate) {
-    return { error: `${label}: ${resolver.rateError ?? "exchange rate unavailable."}` };
+  const resolver = await moneyResolver(acquiredAt, currency);
+  const resolved = resolver.resolveNative(form, field("purchase"), currency);
+  if (!resolved) {
+    return {
+      error: `${label}: enter the price in ${
+        isReportingCurrency(currency) ? "USD or JPY" : `${currency}, USD or JPY`
+      }.`,
+    };
   }
-  if (money.usdCents < 0 || money.jpyYen < 0) {
+  if (resolver.needsRate) {
+    return {
+      error:
+        `${label}: no ${currency} rate is available for that date. ` +
+        "Enter the USD and JPY amounts by hand.",
+    };
+  }
+  const money = resolved.money;
+  if (money.usdCents < 0 || money.jpyYen < 0 || (resolved.nativeMinor ?? 0) < 0) {
     return { error: `${label}: price cannot be negative.` };
   }
 
@@ -221,6 +302,8 @@ async function buildPurchaseRow(
       purchaseCurrency: currency,
       purchaseUsdCents: money.usdCents,
       purchaseJpyYen: money.jpyYen,
+      purchaseNativeMinor: resolved.nativeMinor,
+      purchaseFxNativePerUsd: resolved.nativePerUsd,
       purchaseFxJpyPerUsd: resolver.rate?.jpyPerUsd ?? null,
       purchaseFxDate: resolver.rate?.effectiveDate ?? null,
       purchaseNotes: optionalStr(form, field("purchaseNotes")),

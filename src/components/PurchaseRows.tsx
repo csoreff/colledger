@@ -3,7 +3,13 @@
 import { useId, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { Currency, Grader, Purchase } from "@prisma/client";
-import { CURRENCIES, CURRENCY_LABELS, toInputValue } from "@/lib/currency";
+import {
+  CURRENCIES,
+  CURRENCY_LABELS,
+  isReportingCurrency,
+  minorToInputValue,
+  toInputValue,
+} from "@/lib/currency";
 import { todayInputValue, toDateInputValue } from "@/lib/dates";
 import {
   defaultCurrencyFor,
@@ -35,6 +41,7 @@ type Row = {
   status: string;
   defaultUsd: string;
   defaultJpy: string;
+  defaultNative: string;
   defaultGrade: string;
   defaultCert: string;
   defaultCondition: string;
@@ -63,6 +70,7 @@ function blankRow(key: string): Row {
     status: "OWNED",
     defaultUsd: "",
     defaultJpy: "",
+    defaultNative: "",
     defaultGrade: "",
     defaultCert: "",
     defaultCondition: "",
@@ -86,6 +94,9 @@ function rowFromPurchase(purchase: Purchase, key: string): Row {
     status: purchase.status,
     defaultUsd: toInputValue(money, "USD"),
     defaultJpy: toInputValue(money, "JPY"),
+    defaultNative: isReportingCurrency(purchase.purchaseCurrency)
+      ? ""
+      : minorToInputValue(purchase.purchaseNativeMinor, purchase.purchaseCurrency),
     defaultGrade: purchase.grade ?? "",
     defaultCert: purchase.certNumber ?? "",
     defaultCondition: purchase.condition ?? "",
@@ -165,8 +176,15 @@ export function PurchaseRows({
               className="rounded-lg border border-slate-800 bg-slate-950/40 p-4"
             >
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Purchase {index + 1}
+                <span className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Purchase {index + 1}
+                  </span>
+                  {!isReportingCurrency(row.currency) ? (
+                    <span className="rounded bg-slate-800 px-1.5 py-0.5 text-xs text-slate-300">
+                      {row.currency}
+                    </span>
+                  ) : null}
                 </span>
                 {rows.length > minRows ? (
                   <button
@@ -253,7 +271,7 @@ export function PurchaseRows({
               </div>
 
               <div className="mt-4">
-                <FxRateProvider date={row.acquiredAt}>
+                <FxRateProvider date={row.acquiredAt} currency={row.currency}>
                   <MoneyInput
                     name={field("purchase")}
                     label="Price paid"
@@ -261,10 +279,11 @@ export function PurchaseRows({
                     currency={row.currency}
                     defaultUsd={row.defaultUsd}
                     defaultJpy={row.defaultJpy}
+                    defaultNative={row.defaultNative}
                     hint="The total for this row, not per card."
                   />
                   <div className="mt-1">
-                    <FxRateNotice date={row.acquiredAt} />
+                    <FxRateNotice date={row.acquiredAt} currency={row.currency} />
                   </div>
                 </FxRateProvider>
               </div>

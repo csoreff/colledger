@@ -73,10 +73,17 @@ enum Marketplace {
   OTHER
 }
 
-/// The two currencies the ledger works in. Every amount is held in both.
+/// Currencies a transaction can settle in.
+///
+/// USD and JPY are the *reporting* pair: every amount is stored in both, and
+/// all totals, sorting and profit are computed in both. GBP and AUD are
+/// *transaction* currencies — an amount paid in them is recorded natively and
+/// converted into the reporting pair at that date's rate.
 enum Currency {
   USD
   JPY
+  GBP
+  AUD
 }
 
 /// Cached daily USD->JPY rate, so a given transaction date is fetched once.
@@ -90,6 +97,10 @@ model FxRate {
   effectiveDate DateTime
   /// Yen per one US dollar, e.g. 157.45.
   jpyPerUsd     Float
+  /// Pounds / Australian dollars per one US dollar. Null on rows cached before
+  /// those currencies were supported; fetched on demand and filled in.
+  gbpPerUsd     Float?
+  audPerUsd     Float?
   /// True when no rate existed for the requested date and the latest available
   /// one was substituted (a future date, or before the ECB series begins).
   isFallback    Boolean @default(false)
@@ -160,8 +171,16 @@ model Purchase {
 
   purchaseUsdCents Int
   purchaseJpyYen   Int
-  /// The currency the purchase actually happened in; the other is derived.
+  /// The currency actually paid in. USD/JPY are stored above; GBP/AUD have no
+  /// reporting column of their own and live in purchaseNativeMinor.
   purchaseCurrency Currency @default(USD)
+  /// The amount in the currency actually paid, in that currency's minor unit
+  /// (cents, pence, or whole yen). For USD and JPY this mirrors the column
+  /// above; for GBP and AUD it is the only authoritative figure, the reporting
+  /// pair being derived from it.
+  purchaseNativeMinor Int?
+  /// Units of the native currency per 1 USD on the transaction date.
+  purchaseFxNativePerUsd Float?
   purchaseFxJpyPerUsd Float?
   purchaseFxDate      DateTime?
 

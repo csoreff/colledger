@@ -5,7 +5,14 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type { Expense, Purchase, Sale } from "@prisma/client";
 import type { PurchaseFinancials } from "@/lib/profit";
 import type { Money } from "@/lib/currency";
-import { formatJpy, formatPercent, formatRate, formatUsd } from "@/lib/currency";
+import {
+  formatJpy,
+  formatMinor,
+  formatPercent,
+  formatRate,
+  formatUsd,
+  isReportingCurrency,
+} from "@/lib/currency";
 import { formatDate } from "@/lib/dates";
 import {
   EXPENSE_CATEGORY_LABELS,
@@ -84,6 +91,12 @@ export function PurchaseCard({
             <span className="text-xs text-slate-500">
               {formatDate(purchase.acquiredAt)} ·{" "}
               {MARKETPLACE_LABELS[purchase.purchaseSource]}
+              {/* What actually left your account, visible without expanding. */}
+              {!isReportingCurrency(purchase.purchaseCurrency) ? (
+                <span className="ml-1 text-slate-400">
+                  · paid {formatMinor(purchase.purchaseNativeMinor, purchase.purchaseCurrency)}
+                </span>
+              ) : null}
             </span>
           </span>
         </button>
@@ -115,11 +128,24 @@ export function PurchaseCard({
             <div>
               <dt className="text-xs text-slate-500">Paid</dt>
               <dd className="mt-1">
-                <MoneyValue
-                  money={fin.purchase}
-                  primary={purchase.purchaseCurrency}
-                  align="left"
-                />
+                {/* A GBP/AUD purchase leads with what actually left your
+                    account; the reporting pair sits underneath. */}
+                {isReportingCurrency(purchase.purchaseCurrency) ? (
+                  <MoneyValue
+                    money={fin.purchase}
+                    primary={purchase.purchaseCurrency}
+                    align="left"
+                  />
+                ) : (
+                  <span className="flex flex-col items-start">
+                    <span className="tabular-nums leading-tight">
+                      {formatMinor(purchase.purchaseNativeMinor, purchase.purchaseCurrency)}
+                    </span>
+                    <span className="text-xs tabular-nums leading-tight text-slate-500">
+                      {formatUsd(fin.purchase.usdCents)} · {formatJpy(fin.purchase.jpyYen)}
+                    </span>
+                  </span>
+                )}
               </dd>
             </div>
             <div>
@@ -159,8 +185,12 @@ export function PurchaseCard({
 
           <p className="text-xs text-slate-500">
             Paid in {purchase.purchaseCurrency}
+            {!isReportingCurrency(purchase.purchaseCurrency) &&
+            purchase.purchaseFxNativePerUsd
+              ? ` at ${purchase.purchaseFxNativePerUsd.toFixed(4)} ${purchase.purchaseCurrency} / $1`
+              : ""}
             {purchase.purchaseFxJpyPerUsd
-              ? ` at ${formatRate(purchase.purchaseFxJpyPerUsd)}`
+              ? ` · ${formatRate(purchase.purchaseFxJpyPerUsd)}`
               : ""}
             {purchase.certNumber ? ` · cert ${purchase.certNumber}` : ""}
             {purchase.purchaseNotes ? ` — ${purchase.purchaseNotes}` : ""}

@@ -77,10 +77,28 @@ net profit     = Σ row profit − general expenses
 
 Every one of those is computed in USD and JPY at once — see below.
 
-## Dual currency (USD + JPY)
+## Currencies
 
-Every amount is held twice: **USD in cents and JPY in whole yen**. Yen has no
-subunit, so it is never scaled by 100. Both are integers, so nothing drifts.
+Four are supported, in two roles.
+
+**USD and JPY are the reporting pair.** Every amount is held twice — USD in
+cents and JPY in whole yen — and every total, sort and profit figure is computed
+in both. Yen has no subunit, so it is never scaled by 100. Both are integers, so
+nothing drifts.
+
+**GBP and AUD are transaction currencies.** A purchase paid in either is stored
+natively (in pence or Australian cents) alongside the derived USD/JPY pair, so
+the figure that actually left your account is preserved exactly while every
+rollup keeps working unchanged. The purchase form shows three boxes in that
+case — the native currency leading, then USD and JPY — and typing in any one
+fills the others.
+
+Amounts are formatted with an explicit symbol rather than left to `Intl`, which
+renders AUD as a bare `$` in a US locale and would be indistinguishable from
+USD.
+
+Sales and expenses currently accept USD and JPY; say the word and the same
+treatment extends to them.
 
 Each record also stores **the currency it actually settled in and the FX rate on
 its own transaction date**. That matters more than it sounds: a card bought on
@@ -103,7 +121,9 @@ figures are kept as-is rather than overwritten with the mid-market rate.
 ### Where the rates come from
 
 Historical ECB rates via [frankfurter.dev](https://frankfurter.dev) — free, no
-API key. Each requested date is fetched once and cached in the `FxRate` table.
+API key. JPY, GBP and AUD come back in a single call per date and are cached
+together in the `FxRate` table. A date cached before GBP/AUD support holds only
+a JPY rate, so asking for one of the others refetches and fills it in.
 Three behaviours worth knowing, all verified against the live API:
 
 - **Weekends and holidays** have no published rate, so the previous business day

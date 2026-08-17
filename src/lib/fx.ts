@@ -1,8 +1,10 @@
 // Server-side only: it reads the FxRate cache through Prisma, which cannot run
 // in the browser. Deliberately not guarded with the `server-only` package —
 // that throws outside Next's bundler and would make this untestable in a script.
+import type { Currency } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { toDateInputValue } from "@/lib/dates";
+import type { RateTable } from "@/lib/currency";
 
 /**
  * Historical USD->JPY rates, from the ECB series via frankfurter.dev (free, no
@@ -21,12 +23,16 @@ import { toDateInputValue } from "@/lib/dates";
  */
 
 const BASE_URL = "https://api.frankfurter.dev/v1";
-const LATEST_URL = `${BASE_URL}/latest?base=USD&symbols=JPY`;
+/** Every non-USD currency the ledger supports, fetched in a single call. */
+const SYMBOLS = "JPY,GBP,AUD";
+const LATEST_URL = `${BASE_URL}/latest?base=USD&symbols=${SYMBOLS}`;
 /** First day of the ECB reference series. */
 const SERIES_START = "1999-01-04";
 
 export type FxLookup = {
   jpyPerUsd: number;
+  /** Units per 1 USD for every supported currency, for converting GBP/AUD. */
+  rates: RateTable;
   /** The date the rate is actually from. */
   effectiveDate: Date;
   /** True when the requested date had no rate and a substitute was used. */
@@ -56,13 +62,31 @@ function daysBetween(a: Date, b: Date): number {
 }
 
 type FetchOutcome =
-  | { kind: "ok"; jpyPerUsd: number; effectiveDate: Date }
+  | { kind: "ok"; jpyPerUsd: number; gbpPerUsd: number | null; audPerUsd: number | null; effectiveDate: Date }
   /** The date is genuinely outside the published series. */
   | { kind: "notfound" }
   /** Network failure or upstream 5xx — says nothing about the date. */
   | { kind: "error" };
 
-type FrankfurterResponse = { date?: string; rates?: { JPY?: number } };
+type FrankfurterResponse = {
+  date?: string;
+  rates?: { JPY?: number; GBP?: number; AUD?: number };
+};
+
+function positive(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function buildRates(
+  jpyPerUsd: number,
+  gbpPerUsd: number | null,
+  audPerUsd: number | null,
+): RateTable {
+  const rates: RateTable = { USD: 1, JPY: jpyPerUsd };
+  if (gbpPerUsd) rates.GBP = gbpPerUsd;
+  if (audPerUsd) rates.AUD = audPerUsd;
+  return rates;
+}
 
 async function fetchRateOnce(url: string): Promise<FetchOutcome> {
   let res: Response;
@@ -80,15 +104,15 @@ async function fetchRateOnce(url: string): Promise<FetchOutcome> {
   if (!res.ok) return { kind: "error" };
 
   const body = (await res.json().catch(() => null)) as FrankfurterResponse | null;
-  const rate = body?.rates?.JPY;
-  if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) {
-    return { kind: "error" };
-  }
+  const rate = positive(body?.rates?.JPY);
+  if (rate === null) return { kind: "error" };
 
   const effective = body?.date ? new Date(`${body.date}T12:00:00`) : null;
   return {
     kind: "ok",
     jpyPerUsd: rate,
+    gbpPerUsd: positive(body?.rates?.GBP),
+    audPerUsd: positive(body?.rates?.AUD),
     effectiveDate:
       effective && !Number.isNaN(effective.getTime()) ? effective : new Date(),
   };
@@ -135,13 +159,26 @@ async function nearestCachedRate(requestedDate: Date) {
  * cached rate rather than blocking a save. It only throws when there is no
  * usable number at all.
  */
-export async function getRateForDate(date: Date): Promise<FxLookup> {
+export async function getRateForDate(
+  date: Date,
+  /** Currency the caller needs a rate for; rows cached before GBP/AUD support
+   *  hold only JPY, so asking for one of those forces a refetch. */
+  needed: Currency = "JPY",
+): Promise<FxLookup> {
   const requestedDate = dayKey(date);
 
   const cached = await prisma.fxRate.findUnique({ where: { requestedDate } });
-  if (cached) {
+  const cacheSatisfies =
+    cached !== null &&
+    (needed === "USD" ||
+      needed === "JPY" ||
+      (needed === "GBP" && cached.gbpPerUsd !== null) ||
+      (needed === "AUD" && cached.audPerUsd !== null));
+
+  if (cached && cacheSatisfies) {
     return {
       jpyPerUsd: cached.jpyPerUsd,
+      rates: buildRates(cached.jpyPerUsd, cached.gbpPerUsd, cached.audPerUsd),
       effectiveDate: cached.effectiveDate,
       isFallback: cached.isFallback,
       distanceDays: daysBetween(cached.effectiveDate, requestedDate),
@@ -149,24 +186,26 @@ export async function getRateForDate(date: Date): Promise<FxLookup> {
   }
 
   const outcome = await fetchRate(
-    `${BASE_URL}/${toDateInputValue(requestedDate)}?base=USD&symbols=JPY`,
+    `${BASE_URL}/${toDateInputValue(requestedDate)}?base=USD&symbols=${SYMBOLS}`,
   );
 
   if (outcome.kind === "ok") {
-    // Genuine data for this date — worth caching permanently.
+    const data = {
+      effectiveDate: outcome.effectiveDate,
+      jpyPerUsd: outcome.jpyPerUsd,
+      gbpPerUsd: outcome.gbpPerUsd,
+      audPerUsd: outcome.audPerUsd,
+      isFallback: false,
+    };
+    // Genuine data for this date — worth caching permanently. An existing row
+    // predating GBP/AUD support is updated rather than duplicated.
     await prisma.fxRate
-      .create({
-        data: {
-          requestedDate,
-          effectiveDate: outcome.effectiveDate,
-          jpyPerUsd: outcome.jpyPerUsd,
-          isFallback: false,
-        },
-      })
+      .upsert({ where: { requestedDate }, create: { requestedDate, ...data }, update: data })
       .catch(() => undefined);
 
     return {
       jpyPerUsd: outcome.jpyPerUsd,
+      rates: buildRates(outcome.jpyPerUsd, outcome.gbpPerUsd, outcome.audPerUsd),
       effectiveDate: outcome.effectiveDate,
       isFallback: false,
       distanceDays: daysBetween(outcome.effectiveDate, requestedDate),
@@ -189,6 +228,7 @@ export async function getRateForDate(date: Date): Promise<FxLookup> {
       // and caching the stand-in would freeze the wrong number in place.
       return {
         jpyPerUsd: edge.jpyPerUsd,
+        rates: buildRates(edge.jpyPerUsd, edge.gbpPerUsd, edge.audPerUsd),
         effectiveDate: edge.effectiveDate,
         isFallback: true,
         distanceDays: daysBetween(edge.effectiveDate, requestedDate),
@@ -209,6 +249,7 @@ export async function getRateForDate(date: Date): Promise<FxLookup> {
 
   return {
     jpyPerUsd: nearest.jpyPerUsd,
+    rates: buildRates(nearest.jpyPerUsd, nearest.gbpPerUsd, nearest.audPerUsd),
     effectiveDate: nearest.effectiveDate,
     isFallback: true,
     distanceDays: daysBetween(nearest.effectiveDate, requestedDate),
