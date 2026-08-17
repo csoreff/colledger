@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function EditItemPage({ params }: { params: { id: string } }) {
   const item = await prisma.item.findUnique({
     where: { id: params.id },
-    include: { purchases: { orderBy: { acquiredAt: "asc" } } },
+    include: { purchases: { orderBy: [{ acquiredAt: "asc" }, { id: "asc" }] } },
   });
   if (!item) notFound();
 

@@ -30,6 +30,12 @@ That separation is the point: buy the same card three times — a PSA 10 from
 Yahoo Auctions in yen, a raw copy from eBay in dollars, an ARS 10+ later — and
 each stays independent. Selling one copy never touches the others.
 
+Purchases can be edited two ways. The pencil on a row opens it inline on the
+card's page, for correcting one copy; the card's **Edit** button opens the whole
+item — identity plus every row — for bigger changes. Both share the same
+validation and FX handling. Editing a row leaves its expenses, its sale and its
+sibling rows alone.
+
 Grading is per copy (PSA/BGS/CGC/SGC/TAG/ACE/ARS with grade and cert, or raw
 with a free-text condition), because cert numbers belong to a physical slab.
 ARS is the one grader whose scale runs to **10+**; the form shows each grader's

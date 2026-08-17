@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil } from "lucide-react";
 import type { Expense, Purchase, Sale } from "@prisma/client";
 import type { PurchaseFinancials } from "@/lib/profit";
 import type { Money } from "@/lib/currency";
@@ -24,6 +24,8 @@ import { MoneyProfit, MoneyValue } from "@/components/Money";
 import { DeleteButton } from "@/components/DeleteButton";
 import { ExpenseForm } from "@/components/ExpenseForm";
 import { ExpenseRow } from "@/components/ExpenseRow";
+import { PurchaseEditForm } from "@/components/ItemForm";
+import type { ActionState } from "@/lib/actions";
 import { SaleForm } from "@/components/SaleForm";
 
 type SaleSummary = Sale & { net: Money };
@@ -46,6 +48,8 @@ export function PurchaseCard({
   index,
   fin,
   sales,
+  itemType,
+  updatePurchase,
   deletePurchase,
   deleteExpense,
   deleteSale,
@@ -55,12 +59,15 @@ export function PurchaseCard({
   index: number;
   fin: PurchaseFinancials;
   sales: SaleSummary[];
+  itemType: string;
+  updatePurchase: (state: ActionState, form: FormData) => Promise<ActionState>;
   deletePurchase: () => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   deleteSale: (id: string) => Promise<void>;
   defaultOpen: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [editing, setEditing] = useState(false);
 
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/40">
@@ -113,6 +120,18 @@ export function PurchaseCard({
           <Chip tone={statusTone(purchase.status)}>
             {ITEM_STATUS_LABELS[purchase.status as keyof typeof ITEM_STATUS_LABELS]}
           </Chip>
+          <button
+            type="button"
+            onClick={() => {
+              setEditing(true);
+              setOpen(true);
+            }}
+            className="text-slate-500 hover:text-emerald-400"
+            aria-label={`Edit purchase ${index + 1}`}
+            title="Edit this purchase"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
           <DeleteButton
             action={deletePurchase}
             label="Delete purchase"
@@ -122,7 +141,19 @@ export function PurchaseCard({
         </div>
       </div>
 
-      {open ? (
+      {open && editing ? (
+        <div className="border-t border-slate-800 p-4">
+          <PurchaseEditForm
+            action={updatePurchase}
+            purchase={purchase}
+            itemType={itemType}
+            onSaved={() => setEditing(false)}
+            onCancel={() => setEditing(false)}
+          />
+        </div>
+      ) : null}
+
+      {open && !editing ? (
         <div className="space-y-6 border-t border-slate-800 p-4">
           <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
             <div>

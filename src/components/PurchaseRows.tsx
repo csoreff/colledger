@@ -116,6 +116,8 @@ export function PurchaseRows({
   minRows = 1,
   heading = "Purchases",
   description,
+  allowAdd = true,
+  bare = false,
 }: {
   purchases?: Purchase[];
   itemType: string;
@@ -123,6 +125,10 @@ export function PurchaseRows({
   minRows?: number;
   heading?: string;
   description?: string;
+  /** Hidden when editing one existing row, where adding makes no sense. */
+  allowAdd?: boolean;
+  /** Drops the card chrome and per-row header, for use inside a framed panel. */
+  bare?: boolean;
 }) {
   const prefix = useId().replace(/[^A-Za-z0-9]/g, "");
   const addedCount = useRef(0);
@@ -143,25 +149,25 @@ export function PurchaseRows({
     );
 
   return (
-    <section className="card space-y-4">
+    <section className={bare ? "space-y-4" : "card space-y-4"}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
             {heading}
           </h2>
-          <p className="mt-1 text-xs text-slate-500">
-            {description ??
-              "One row per copy you bought. Each keeps its own price, date, condition and status."}
-          </p>
+          {description === "" ? null : (
+            <p className="mt-1 text-xs text-slate-500">
+              {description ??
+                "One row per copy you bought. Each keeps its own price, date, condition and status."}
+            </p>
+          )}
         </div>
-        <button
-          type="button"
-          onClick={appendRow}
-          className="btn-secondary"
-        >
-          <Plus className="h-4 w-4" />
-          Add another purchase
-        </button>
+        {allowAdd ? (
+          <button type="button" onClick={appendRow} className="btn-secondary">
+            <Plus className="h-4 w-4" />
+            Add another purchase
+          </button>
+        ) : null}
       </div>
 
       <div className="space-y-4">
@@ -173,9 +179,11 @@ export function PurchaseRows({
           return (
             <div
               key={row.key}
-              className="rounded-lg border border-slate-800 bg-slate-950/40 p-4"
+              className={bare ? "" : "rounded-lg border border-slate-800 bg-slate-950/40 p-4"}
             >
-              <div className="mb-3 flex items-center justify-between">
+              <div
+                className={`mb-3 items-center justify-between ${bare ? "hidden" : "flex"}`}
+              >
                 <span className="flex items-center gap-2">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Purchase {index + 1}

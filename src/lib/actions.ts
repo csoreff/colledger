@@ -425,6 +425,38 @@ export async function addPurchase(
   return { ok: true };
 }
 
+/**
+ * Edits one purchase row in place, from the item page.
+ *
+ * The whole-item form at /items/[id]/edit can do this too, but it saves every
+ * row at once; this exists for correcting a single copy without touching the
+ * others. Both share buildPurchaseRow, so validation and FX handling match.
+ */
+export async function updatePurchase(
+  purchaseId: string,
+  _prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const existing = await prisma.purchase.findUnique({ where: { id: purchaseId } });
+  if (!existing) return { error: "That purchase no longer exists." };
+
+  const collected = await collectPurchaseRows(form);
+  if ("error" in collected) return { error: collected.error };
+
+  const row = collected.rows[0];
+  if (!row) return { error: "Nothing to save." };
+
+  await prisma.purchase.update({
+    where: { id: purchaseId },
+    data: stripRowId(row) as never,
+  });
+
+  revalidatePath("/");
+  revalidatePath("/items");
+  revalidatePath(`/items/${existing.itemId}`);
+  return { ok: true };
+}
+
 export async function deletePurchase(purchaseId: string): Promise<void> {
   const purchase = await prisma.purchase.delete({ where: { id: purchaseId } });
   revalidatePath("/");

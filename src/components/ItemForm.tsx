@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import Link from "next/link";
 import type { Item, Purchase } from "@prisma/client";
@@ -144,6 +144,49 @@ export function ItemForm({
         <Link href={item ? `/items/${item.id}` : "/items"} className="btn-secondary">
           Cancel
         </Link>
+      </div>
+    </form>
+  );
+}
+
+/** Edits one existing purchase row in place, on the item page. */
+export function PurchaseEditForm({
+  action,
+  purchase,
+  itemType,
+  onSaved,
+  onCancel,
+}: {
+  action: (state: ActionState, form: FormData) => Promise<ActionState>;
+  purchase: Purchase;
+  itemType: string;
+  onSaved?: () => void;
+  onCancel?: () => void;
+}) {
+  const [state, formAction] = useFormState(action, {} as ActionState);
+
+  useEffect(() => {
+    if (state.ok) onSaved?.();
+  }, [state, onSaved]);
+
+  return (
+    <form action={formAction} className="space-y-4">
+      <FormError message={state.error} />
+      <PurchaseRows
+        purchases={[purchase]}
+        itemType={itemType}
+        heading="Edit this purchase"
+        description=""
+        allowAdd={false}
+        bare
+      />
+      <div className="flex gap-2">
+        <SubmitButton label="Save changes" />
+        {onCancel ? (
+          <button type="button" onClick={onCancel} className="btn-secondary">
+            Cancel
+          </button>
+        ) : null}
       </div>
     </form>
   );

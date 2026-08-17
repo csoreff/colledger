@@ -87,7 +87,7 @@ export default async function ItemsPage({
     where,
     include: {
       purchases: {
-        orderBy: { acquiredAt: "asc" },
+        orderBy: [{ acquiredAt: "asc" }, { id: "asc" }],
         include: { expenses: true, sales: true },
       },
     },

@@ -8,6 +8,7 @@ import {
   deleteItem,
   deletePurchase,
   deleteSale,
+  updatePurchase,
 } from "@/lib/actions";
 import {
   computeItemRollup,
@@ -29,7 +30,7 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
     where: { id: params.id },
     include: {
       purchases: {
-        orderBy: { acquiredAt: "asc" },
+        orderBy: [{ acquiredAt: "asc" }, { id: "asc" }],
         include: {
           expenses: { orderBy: { incurredAt: "desc" } },
           sales: { orderBy: { soldAt: "desc" } },
@@ -163,6 +164,8 @@ export default async function ItemDetailPage({ params }: { params: { id: string 
               index={index}
               fin={computePurchaseFinancials(purchase)}
               sales={purchase.sales.map((sale) => ({ ...sale, net: saleNetMoney(sale) }))}
+              itemType={item.type}
+              updatePurchase={updatePurchase.bind(null, purchase.id)}
               deletePurchase={deletePurchase.bind(null, purchase.id)}
               deleteExpense={deleteExpense}
               deleteSale={deleteSale}
