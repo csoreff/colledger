@@ -3,7 +3,15 @@
 import { useFormStatus } from "react-dom";
 import { Trash2 } from "lucide-react";
 
-function Inner({ label, iconOnly }: { label: string; iconOnly: boolean }) {
+function Inner({
+  label,
+  pendingLabel,
+  iconOnly,
+}: {
+  label: string;
+  pendingLabel: string;
+  iconOnly: boolean;
+}) {
   const { pending } = useFormStatus();
   return (
     <button
@@ -13,7 +21,7 @@ function Inner({ label, iconOnly }: { label: string; iconOnly: boolean }) {
       aria-label={label}
       title={label}
     >
-      {iconOnly ? <Trash2 className="h-4 w-4" /> : pending ? "Deleting…" : label}
+      {iconOnly ? <Trash2 className="h-4 w-4" /> : pending ? pendingLabel : label}
     </button>
   );
 }
@@ -25,11 +33,16 @@ function Inner({ label, iconOnly }: { label: string; iconOnly: boolean }) {
 export function DeleteButton({
   action,
   label = "Delete",
+  // Not every destructive action is a delete — revoking a key uses this too —
+  // so the in-flight wording follows the label rather than always saying
+  // "Deleting…".
+  pendingLabel = "Deleting…",
   confirmMessage = "Delete this? This cannot be undone.",
   iconOnly = false,
 }: {
   action: () => Promise<void>;
   label?: string;
+  pendingLabel?: string;
   confirmMessage?: string;
   iconOnly?: boolean;
 }) {
@@ -40,7 +53,7 @@ export function DeleteButton({
         if (!window.confirm(confirmMessage)) event.preventDefault();
       }}
     >
-      <Inner label={label} iconOnly={iconOnly} />
+      <Inner label={label} pendingLabel={pendingLabel} iconOnly={iconOnly} />
     </form>
   );
 }

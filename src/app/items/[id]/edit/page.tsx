@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/tenant";
 import { updateItem } from "@/lib/actions";
 import { ItemForm } from "@/components/ItemForm";
 import { PageHeader } from "@/components/ui";
@@ -7,8 +8,10 @@ import { PageHeader } from "@/components/ui";
 export const dynamic = "force-dynamic";
 
 export default async function EditItemPage({ params }: { params: { id: string } }) {
-  const item = await prisma.item.findUnique({
-    where: { id: params.id },
+  const user = await requireUser();
+
+  const item = await prisma.item.findFirst({
+    where: { id: params.id, userId: user.id },
     include: { purchases: { orderBy: [{ acquiredAt: "asc" }, { id: "asc" }] } },
   });
   if (!item) notFound();

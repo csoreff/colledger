@@ -1,6 +1,7 @@
 import { AlertTriangle, ExternalLink, Info } from "lucide-react";
 import type { Grader, ItemType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/tenant";
 import { buildCacheKey, getProvider, runCompSearch, summarizeComps } from "@/lib/comps";
 import { deleteComp, refreshComps } from "@/lib/actions";
 import { formatDate } from "@/lib/dates";
@@ -26,6 +27,7 @@ type SearchParams = {
 };
 
 export default async function CompsPage({ searchParams }: { searchParams: SearchParams }) {
+  const user = await requireUser();
   const provider = getProvider();
   const unavailable = provider.unavailableReason();
 
@@ -44,14 +46,16 @@ export default async function CompsPage({ searchParams }: { searchParams: Search
   if (query) {
     const compQuery = { query, itemType, grader, grade };
     const cacheKey = buildCacheKey(compQuery, provider.id);
-    const existing = await prisma.compSearch.findUnique({ where: { cacheKey } });
+    const existing = await prisma.compSearch.findUnique({
+      where: { userId_cacheKey: { userId: user.id, cacheKey } },
+    });
 
     if (existing) {
       // Reuse whatever we already have; the Refresh button forces a re-fetch.
       searchId = existing.id;
       warning = existing.warning;
     } else {
-      const result = await runCompSearch(compQuery);
+      const result = await runCompSearch(user.id, compQuery);
       searchId = result.searchId;
       warning = result.warning;
     }
@@ -59,7 +63,7 @@ export default async function CompsPage({ searchParams }: { searchParams: Search
 
   const comps = searchId
     ? await prisma.soldComp.findMany({
-        where: { searchId },
+        where: { searchId, search: { userId: user.id } },
         orderBy: [{ soldAt: "desc" }, { createdAt: "desc" }],
       })
     : [];

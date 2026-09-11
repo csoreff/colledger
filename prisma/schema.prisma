@@ -8,6 +8,13 @@
 // transacted in plus the FX rate used, so the converted figure is reproducible
 // and stays fixed at its historical value no matter how rates move later.
 // See `src/lib/currency.ts` and `src/lib/fx.ts`.
+//
+// TENANCY: every ledger row carries `userId` directly rather than reaching it
+// through a parent relation. The denormalization is deliberate — it means a
+// tenant filter is always one column away, so an update or delete can be
+// written as `where: { id, userId }` and cannot touch another user's row even
+// if an id is guessed. Rows inherit their owner from their parent on create;
+// `src/lib/tenant.ts` is the only place that decides what that owner is.
 
 generator client {
   provider = "prisma-client-js"
@@ -16,6 +23,10 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  // Pooled connections (PgBouncer on Neon/Supabase) can't run DDL, so
+  // migrations go through the direct connection. Falls back to DATABASE_URL
+  // locally, where the two are the same.
+  directUrl = env("DIRECT_URL")
 }
 
 enum ItemType {
@@ -86,7 +97,84 @@ enum Currency {
   AUD
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
+/// What an API key is allowed to do. A key can never exceed its owner's role:
+/// ADMIN_ALL on a key owned by a plain user is meaningless and is rejected when
+/// the key is minted.
+enum ApiScope {
+  /// Read the ledger.
+  READ
+  /// Create, update and delete ledger rows.
+  WRITE
+  /// Act on any user's ledger by naming them, and manage users.
+  ADMIN_ALL
+}
+
+/// A person with a login. Each user owns an entirely separate ledger.
+model User {
+  id String @id @default(cuid())
+
+  email String @unique
+  name  String?
+  /// bcrypt. Empty string means "no password set" — the account exists but
+  /// cannot be signed into until one is set (the adopted legacy account).
+  passwordHash String
+  role         UserRole @default(USER)
+
+  /// Set false to keep an account on file but block sign-in and API use.
+  isActive Boolean @default(true)
+
+  items        Item[]
+  purchases    Purchase[]
+  expenses     Expense[]
+  sales        Sale[]
+  compSearches CompSearch[]
+  apiKeys      ApiKey[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+}
+
+/// A bearer token for the REST API.
+///
+/// Only the SHA-256 of the key is stored, so a database leak does not hand over
+/// working credentials and the plaintext can be shown exactly once at creation.
+/// `prefix` is the first few visible characters, kept purely so a key is
+/// recognizable in the management UI.
+model ApiKey {
+  id String @id @default(cuid())
+
+  /// The key's owner. Requests act as this user unless the key carries
+  /// ADMIN_ALL and names a different one.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name   String
+  prefix String
+  /// SHA-256 hex of the full plaintext key. Unique so a lookup is one indexed
+  /// read rather than a scan-and-compare.
+  hash   String @unique
+
+  scopes ApiScope[]
+
+  lastUsedAt DateTime?
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
 /// Cached daily USD->JPY rate, so a given transaction date is fetched once.
+/// Not tenanted: a published exchange rate is the same fact for everyone, and
+/// sharing the cache means one user's lookup warms it for the rest.
 model FxRate {
   id String @id @default(cuid())
 
@@ -114,6 +202,14 @@ model FxRate {
 model Item {
   id String @id @default(cuid())
 
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Caller-supplied id from whatever system pushed this row in over the API.
+  /// Unique per user, so a remote seed can be re-run and will update rather
+  /// than duplicate. Null for rows created through the web UI.
+  externalRef String?
+
   // --- Identity: what the card or volume *is* ---
   type  ItemType
   title String
@@ -140,6 +236,8 @@ model Item {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, externalRef])
+  @@index([userId])
   @@index([type])
   @@index([title])
 }
@@ -150,8 +248,14 @@ model Item {
 model Purchase {
   id String @id @default(cuid())
 
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   itemId String
   item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  /// Caller-supplied id for API upserts. See Item.externalRef.
+  externalRef String?
 
   // --- Condition of this particular copy ---
   grader     Grader  @default(RAW)
@@ -195,6 +299,8 @@ model Purchase {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, externalRef])
+  @@index([userId])
   @@index([itemId])
   @@index([status])
   @@index([acquiredAt])
@@ -208,8 +314,14 @@ model Purchase {
 model Expense {
   id String @id @default(cuid())
 
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   purchaseId String?
   purchase   Purchase? @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+
+  /// Caller-supplied id for API upserts. See Item.externalRef.
+  externalRef String?
 
   category    ExpenseCategory
   description String
@@ -227,6 +339,8 @@ model Expense {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, externalRef])
+  @@index([userId])
   @@index([purchaseId])
   @@index([category])
   @@index([incurredAt])
@@ -237,8 +351,14 @@ model Expense {
 model Sale {
   id String @id @default(cuid())
 
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   purchaseId String
   purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+
+  /// Caller-supplied id for API upserts. See Item.externalRef.
+  externalRef String?
 
   soldAt   DateTime
   platform Marketplace @default(EBAY)
@@ -277,6 +397,8 @@ model Sale {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, externalRef])
+  @@index([userId])
   @@index([purchaseId])
   @@index([soldAt])
 }
@@ -287,11 +409,18 @@ model Sale {
 
 /// A cached comp search. Results are stored so repeat lookups don't re-hit the
 /// upstream provider, and so manually-corrected prices survive.
+///
+/// Tenanted despite comps being public market data, because the hand-entered
+/// comps and hand-corrected Best Offer prices attached to a search are the
+/// user's own research and must not leak between accounts.
 model CompSearch {
   id String @id @default(cuid())
 
-  /// Normalized cache key: query + filters.
-  cacheKey String @unique
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Normalized cache key: query + filters. Unique per user, not globally.
+  cacheKey String
 
   query     String
   itemType  ItemType?
@@ -310,6 +439,8 @@ model CompSearch {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userId, cacheKey])
+  @@index([userId])
   @@index([query])
 }
 

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/tenant";
 import {
   computePortfolioTotals,
   computePurchaseFinancials,
@@ -14,10 +15,15 @@ import { MoneyProfit, MoneyValue } from "@/components/Money";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
+  const user = await requireUser();
+
   const [purchases, generalExpenses, itemCount] = await Promise.all([
-    prisma.purchase.findMany({ include: { expenses: true, sales: true } }),
-    prisma.expense.findMany({ where: { purchaseId: null } }),
-    prisma.item.count(),
+    prisma.purchase.findMany({
+      where: { userId: user.id },
+      include: { expenses: true, sales: true },
+    }),
+    prisma.expense.findMany({ where: { userId: user.id, purchaseId: null } }),
+    prisma.item.count({ where: { userId: user.id } }),
   ]);
 
   const totals = computePortfolioTotals(purchases, generalExpenses, itemCount);
@@ -62,6 +68,7 @@ export default async function DashboardPage() {
   // --- Expense breakdown across every expense, item-level and general ---
   const expenseGroups = await prisma.expense.groupBy({
     by: ["category"],
+    where: { userId: user.id },
     _sum: { amountUsdCents: true, amountJpyYen: true },
     orderBy: { _sum: { amountUsdCents: "desc" } },
   });
@@ -71,6 +78,7 @@ export default async function DashboardPage() {
   );
 
   const recentSales = await prisma.sale.findMany({
+    where: { userId: user.id },
     take: 8,
     orderBy: { soldAt: "desc" },
     include: {

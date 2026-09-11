@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ExternalLink, Search } from "lucide-react";
 import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/tenant";
 import {
   addPurchase,
   deleteExpense,
@@ -26,8 +27,12 @@ import { PurchaseCard } from "@/components/PurchaseCard";
 export const dynamic = "force-dynamic";
 
 export default async function ItemDetailPage({ params }: { params: { id: string } }) {
-  const item = await prisma.item.findUnique({
-    where: { id: params.id },
+  const user = await requireUser();
+
+  // findFirst, not findUnique: the lookup is by id *and* owner, so another
+  // account's item is a 404 here rather than a readable page.
+  const item = await prisma.item.findFirst({
+    where: { id: params.id, userId: user.id },
     include: {
       purchases: {
         orderBy: [{ acquiredAt: "asc" }, { id: "asc" }],

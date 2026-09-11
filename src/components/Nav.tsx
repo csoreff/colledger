@@ -2,16 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpen, LayoutDashboard, Receipt, Search } from "lucide-react";
+import { BookOpen, LayoutDashboard, Receipt, Search, Settings } from "lucide-react";
+import type { CurrentUser } from "@/lib/tenant";
+import { SignOutButton } from "@/components/AuthForms";
 
 const LINKS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { href: "/items", label: "Collection", icon: BookOpen, exact: false },
   { href: "/expenses", label: "Expenses", icon: Receipt, exact: false },
   { href: "/comps", label: "Sold comps", icon: Search, exact: false },
+  { href: "/settings", label: "Settings", icon: Settings, exact: false },
 ];
 
-export function Nav() {
+export function Nav({ user }: { user: CurrentUser }) {
   const pathname = usePathname();
 
   return (
@@ -21,7 +24,7 @@ export function Nav() {
           <span className="text-emerald-400">Collectors</span> Ledger
         </Link>
 
-        <nav className="flex flex-wrap gap-1">
+        <nav className="flex flex-wrap items-center gap-1">
           {LINKS.map(({ href, label, icon: Icon, exact }) => {
             const active = exact ? pathname === href : pathname.startsWith(href);
             return (
@@ -39,6 +42,11 @@ export function Nav() {
               </Link>
             );
           })}
+
+          <span className="ml-2 hidden text-xs text-slate-500 lg:inline" title={user.email}>
+            {user.name || user.email}
+          </span>
+          <SignOutButton />
         </nav>
       </div>
     </header>

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Grader, ItemStatus, ItemType, Marketplace, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/tenant";
 import { computeItemRollup } from "@/lib/profit";
 import { formatDate } from "@/lib/dates";
 import {
@@ -52,7 +53,9 @@ export default async function ItemsPage({
 }: {
   searchParams: SearchParams;
 }) {
-  const where: Prisma.ItemWhereInput = {};
+  const user = await requireUser();
+
+  const where: Prisma.ItemWhereInput = { userId: user.id };
 
   if (searchParams.q) {
     const q = searchParams.q;

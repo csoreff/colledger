@@ -19,6 +19,7 @@ import {
   type Money,
 } from "@/lib/currency";
 import { runCompSearch } from "@/lib/comps";
+import { requireUser } from "@/lib/tenant";
 import {
   EXPENSE_CATEGORIES,
   GRADERS,
@@ -27,6 +28,19 @@ import {
 } from "@/lib/labels";
 
 export type ActionState = { error?: string; ok?: boolean };
+
+/**
+ * Every action here belongs to exactly one signed-in user, and none of them
+ * take an owner as an argument — the owner always comes from the session via
+ * `requireUser()`. A row is reached by `{ id, userId }`, never by `id` alone,
+ * so an id belonging to someone else simply matches nothing. That is why the
+ * single-row writes below use `updateMany`/`deleteMany`: Prisma's `update` and
+ * `delete` only accept a unique field, which would mean trusting the id on its
+ * own.
+ */
+
+/** What a scoped write matched, so callers can tell "not yours" from "done". */
+const NOT_FOUND = "That record no longer exists.";
 
 /** Zod's ZodError exposes `.issues`; `.errors` does not exist. */
 function firstIssue(error: z.ZodError): string {
@@ -338,6 +352,8 @@ export async function createItem(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
+  const user = await requireUser();
+
   const identity = parseIdentity(form);
   if (!identity.success) return { error: firstIssue(identity.error) };
 
@@ -347,8 +363,11 @@ export async function createItem(
   const item = await prisma.item.create({
     data: {
       ...identity.data,
+      userId: user.id,
       purchases: {
-        create: collected.rows.map((row) => stripRowId(row)),
+        // Purchases carry the owner too rather than inheriting it through the
+        // item, so a purchase query never has to join to find out whose it is.
+        create: collected.rows.map((row) => ({ ...stripRowId(row), userId: user.id })),
       },
     } as never,
   });
@@ -369,26 +388,46 @@ export async function updateItem(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
+  const user = await requireUser();
+
   const identity = parseIdentity(form);
   if (!identity.success) return { error: firstIssue(identity.error) };
 
   const collected = await collectPurchaseRows(form);
   if ("error" in collected) return { error: collected.error };
 
+  const owned = await prisma.item.findFirst({
+    where: { id: itemId, userId: user.id },
+    select: { id: true },
+  });
+  if (!owned) return { error: NOT_FOUND };
+
   const keptIds = collected.rows.map((r) => r.id).filter(Boolean) as string[];
 
   await prisma.$transaction(async (tx) => {
-    await tx.item.update({ where: { id: itemId }, data: identity.data as never });
+    await tx.item.updateMany({
+      where: { id: itemId, userId: user.id },
+      data: identity.data as never,
+    });
 
     await tx.purchase.deleteMany({
-      where: { itemId, ...(keptIds.length ? { id: { notIn: keptIds } } : {}) },
+      where: {
+        itemId,
+        userId: user.id,
+        ...(keptIds.length ? { id: { notIn: keptIds } } : {}),
+      },
     });
 
     for (const { id, ...row } of collected.rows) {
       if (id) {
-        await tx.purchase.update({ where: { id }, data: row as never });
+        // Scoped by owner *and* item: a row id smuggled in from another card
+        // updates nothing rather than being quietly re-parented.
+        await tx.purchase.updateMany({
+          where: { id, itemId, userId: user.id },
+          data: row as never,
+        });
       } else {
-        await tx.purchase.create({ data: { ...row, itemId } as never });
+        await tx.purchase.create({ data: { ...row, itemId, userId: user.id } as never });
       }
     }
   });
@@ -400,7 +439,8 @@ export async function updateItem(
 }
 
 export async function deleteItem(itemId: string): Promise<void> {
-  await prisma.item.delete({ where: { id: itemId } });
+  const user = await requireUser();
+  await prisma.item.deleteMany({ where: { id: itemId, userId: user.id } });
   revalidatePath("/");
   revalidatePath("/items");
   redirect("/items");
@@ -412,11 +452,23 @@ export async function addPurchase(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
+  const user = await requireUser();
+
   const collected = await collectPurchaseRows(form);
   if ("error" in collected) return { error: collected.error };
 
+  const owned = await prisma.item.findFirst({
+    where: { id: itemId, userId: user.id },
+    select: { id: true },
+  });
+  if (!owned) return { error: NOT_FOUND };
+
   await prisma.purchase.createMany({
-    data: collected.rows.map((row) => ({ ...stripRowId(row), itemId })) as never,
+    data: collected.rows.map((row) => ({
+      ...stripRowId(row),
+      itemId,
+      userId: user.id,
+    })) as never,
   });
 
   revalidatePath("/");
@@ -437,7 +489,12 @@ export async function updatePurchase(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const existing = await prisma.purchase.findUnique({ where: { id: purchaseId } });
+  const user = await requireUser();
+
+  const existing = await prisma.purchase.findFirst({
+    where: { id: purchaseId, userId: user.id },
+    select: { itemId: true },
+  });
   if (!existing) return { error: "That purchase no longer exists." };
 
   const collected = await collectPurchaseRows(form);
@@ -446,8 +503,8 @@ export async function updatePurchase(
   const row = collected.rows[0];
   if (!row) return { error: "Nothing to save." };
 
-  await prisma.purchase.update({
-    where: { id: purchaseId },
+  await prisma.purchase.updateMany({
+    where: { id: purchaseId, userId: user.id },
     data: stripRowId(row) as never,
   });
 
@@ -458,7 +515,17 @@ export async function updatePurchase(
 }
 
 export async function deletePurchase(purchaseId: string): Promise<void> {
-  const purchase = await prisma.purchase.delete({ where: { id: purchaseId } });
+  const user = await requireUser();
+
+  // Read the parent first: after the delete there's nothing left to tell us
+  // which item page needs revalidating.
+  const purchase = await prisma.purchase.findFirst({
+    where: { id: purchaseId, userId: user.id },
+    select: { itemId: true },
+  });
+  if (!purchase) return;
+
+  await prisma.purchase.deleteMany({ where: { id: purchaseId, userId: user.id } });
   revalidatePath("/");
   revalidatePath("/items");
   revalidatePath(`/items/${purchase.itemId}`);
@@ -469,9 +536,17 @@ export async function setPurchaseStatus(
   purchaseId: string,
   status: string,
 ): Promise<void> {
+  const user = await requireUser();
   if (!ITEM_STATUSES.includes(status as (typeof ITEM_STATUSES)[number])) return;
-  const purchase = await prisma.purchase.update({
-    where: { id: purchaseId },
+
+  const purchase = await prisma.purchase.findFirst({
+    where: { id: purchaseId, userId: user.id },
+    select: { itemId: true },
+  });
+  if (!purchase) return;
+
+  await prisma.purchase.updateMany({
+    where: { id: purchaseId, userId: user.id },
     data: { status: status as never },
   });
   revalidatePath("/");
@@ -543,10 +618,23 @@ export async function createExpense(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
+  const user = await requireUser();
+
   const parsed = await parseExpenseForm(form);
   if ("error" in parsed) return { error: parsed.error };
 
-  await prisma.expense.create({ data: parsed.data as never });
+  // An expense attached to a copy must be attached to a copy you own,
+  // otherwise the form could be used to pin costs onto someone else's card.
+  const purchaseId = parsed.data.purchaseId as string | null;
+  if (purchaseId) {
+    const owned = await prisma.purchase.findFirst({
+      where: { id: purchaseId, userId: user.id },
+      select: { id: true },
+    });
+    if (!owned) return { error: NOT_FOUND };
+  }
+
+  await prisma.expense.create({ data: { ...parsed.data, userId: user.id } as never });
 
   revalidateExpenseViews();
   return { ok: true };
@@ -562,7 +650,12 @@ export async function updateExpense(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
-  const existing = await prisma.expense.findUnique({ where: { id: expenseId } });
+  const user = await requireUser();
+
+  const existing = await prisma.expense.findFirst({
+    where: { id: expenseId, userId: user.id },
+    select: { id: true },
+  });
   if (!existing) return { error: "That expense no longer exists." };
 
   const parsed = await parseExpenseForm(form);
@@ -570,14 +663,18 @@ export async function updateExpense(
 
   const fields = { ...(parsed.data as Record<string, unknown>) };
   delete fields.purchaseId;
-  await prisma.expense.update({ where: { id: expenseId }, data: fields as never });
+  await prisma.expense.updateMany({
+    where: { id: expenseId, userId: user.id },
+    data: fields as never,
+  });
 
   revalidateExpenseViews();
   return { ok: true };
 }
 
 export async function deleteExpense(expenseId: string): Promise<void> {
-  await prisma.expense.delete({ where: { id: expenseId } });
+  const user = await requireUser();
+  await prisma.expense.deleteMany({ where: { id: expenseId, userId: user.id } });
   revalidateExpenseViews();
 }
 
@@ -589,10 +686,18 @@ export async function createSale(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
+  const user = await requireUser();
+
   const purchaseId = str(form, "purchaseId");
   const soldAt = parseDateInput(str(form, "soldAt"));
   if (!purchaseId) return { error: "Missing purchase." };
   if (!soldAt) return { error: "A valid sale date is required." };
+
+  const owned = await prisma.purchase.findFirst({
+    where: { id: purchaseId, userId: user.id },
+    select: { id: true },
+  });
+  if (!owned) return { error: NOT_FOUND };
 
   const currency = currencyOf(form);
   const resolver = await moneyResolver(soldAt);
@@ -621,6 +726,7 @@ export async function createSale(
   await prisma.sale.create({
     data: {
       purchaseId,
+      userId: user.id,
       soldAt,
       platform: (str(form, "platform") || "EBAY") as never,
       quantity,
@@ -645,24 +751,47 @@ export async function createSale(
   });
 
   // Recording a sale is what marks that copy sold; no reason to do it twice.
-  const purchase = await prisma.purchase.update({
-    where: { id: purchaseId },
+  await prisma.purchase.updateMany({
+    where: { id: purchaseId, userId: user.id },
     data: { status: "SOLD" },
+  });
+  const purchase = await prisma.purchase.findFirst({
+    where: { id: purchaseId, userId: user.id },
+    select: { itemId: true },
   });
 
   revalidatePath("/");
   revalidatePath("/items");
-  revalidatePath(`/items/${purchase.itemId}`);
+  if (purchase) revalidatePath(`/items/${purchase.itemId}`);
   return { ok: true };
 }
 
 export async function deleteSale(saleId: string): Promise<void> {
-  const sale = await prisma.sale.delete({ where: { id: saleId } });
+  const user = await requireUser();
 
-  const remaining = await prisma.sale.count({ where: { purchaseId: sale.purchaseId } });
-  const purchase = remaining === 0
-    ? await prisma.purchase.update({ where: { id: sale.purchaseId }, data: { status: "OWNED" } })
-    : await prisma.purchase.findUnique({ where: { id: sale.purchaseId } });
+  const sale = await prisma.sale.findFirst({
+    where: { id: saleId, userId: user.id },
+    select: { purchaseId: true },
+  });
+  if (!sale) return;
+
+  await prisma.sale.deleteMany({ where: { id: saleId, userId: user.id } });
+
+  // Removing the last sale puts the copy back in inventory.
+  const remaining = await prisma.sale.count({
+    where: { purchaseId: sale.purchaseId, userId: user.id },
+  });
+  if (remaining === 0) {
+    await prisma.purchase.updateMany({
+      where: { id: sale.purchaseId, userId: user.id },
+      data: { status: "OWNED" },
+    });
+  }
+
+  const purchase = await prisma.purchase.findFirst({
+    where: { id: sale.purchaseId, userId: user.id },
+    select: { itemId: true },
+  });
 
   revalidatePath("/");
   revalidatePath("/items");
@@ -674,6 +803,8 @@ export async function deleteSale(saleId: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function refreshComps(formData: FormData): Promise<void> {
+  const user = await requireUser();
+
   const query = str(formData, "query");
   if (!query) return;
 
@@ -681,6 +812,7 @@ export async function refreshComps(formData: FormData): Promise<void> {
   const typeRaw = str(formData, "itemType");
 
   await runCompSearch(
+    user.id,
     {
       query,
       itemType: typeRaw ? (typeRaw as ItemType) : null,
@@ -697,10 +829,18 @@ export async function addManualComp(
   _prev: ActionState,
   form: FormData,
 ): Promise<ActionState> {
+  const user = await requireUser();
+
   const searchId = str(form, "searchId");
   const title = str(form, "title");
   if (!searchId) return { error: "Missing search." };
   if (!title) return { error: "Title is required." };
+
+  const search = await prisma.compSearch.findFirst({
+    where: { id: searchId, userId: user.id },
+    select: { id: true },
+  });
+  if (!search) return { error: NOT_FOUND };
 
   const soldAt = parseDateInput(str(form, "soldAt"));
   const currency = currencyOf(form);
@@ -745,7 +885,13 @@ export async function setCompManualPrice(
   usdInput: string,
   jpyInput: string,
 ): Promise<void> {
-  const comp = await prisma.soldComp.findUnique({ where: { id: compId } });
+  const user = await requireUser();
+
+  // SoldComp has no owner column of its own — it is reached through the search
+  // that holds it, so the tenant filter is a relation filter.
+  const comp = await prisma.soldComp.findFirst({
+    where: { id: compId, search: { userId: user.id } },
+  });
   if (!comp) return;
 
   const usdCents = parseUsdToCents(usdInput);
@@ -781,6 +927,9 @@ export async function setCompManualPrice(
 }
 
 export async function deleteComp(compId: string): Promise<void> {
-  await prisma.soldComp.delete({ where: { id: compId } });
+  const user = await requireUser();
+  await prisma.soldComp.deleteMany({
+    where: { id: compId, search: { userId: user.id } },
+  });
   revalidatePath("/comps");
 }

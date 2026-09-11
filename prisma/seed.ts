@@ -1,13 +1,24 @@
 /**
  * Sample data for kicking the tyres. Run with: npm run seed
- * Safe to re-run — it clears the tables it owns first.
+ *
+ * Everything is created under one demo account, and the wipe at the start is
+ * scoped to that account. That scoping matters now the app is multi-user: an
+ * unqualified `deleteMany()` here would clear every account's ledger, which on
+ * a shared deployment is somebody's real collection.
+ *
+ *   SEED_EMAIL     account to seed into (default demo@collectors-ledger.local)
+ *   SEED_PASSWORD  password to set when creating it (default "demo-password")
  *
  * Rates here are fixed rather than fetched, so the sample data is identical on
  * every machine. Real entries get the live rate for their transaction date.
  */
 import { PrismaClient } from "@prisma/client";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
+
+const SEED_EMAIL = (process.env.SEED_EMAIL ?? "demo@collectors-ledger.local").toLowerCase();
+const SEED_PASSWORD = process.env.SEED_PASSWORD ?? "demo-password";
 
 function daysAgo(days: number): Date {
   const date = new Date();
@@ -30,17 +41,32 @@ const jpy = (yen: number, rate: number) => ({
 });
 
 async function main() {
-  await prisma.soldComp.deleteMany();
-  await prisma.compSearch.deleteMany();
-  await prisma.sale.deleteMany();
-  await prisma.expense.deleteMany();
-  await prisma.purchase.deleteMany();
-  await prisma.item.deleteMany();
+  const user = await prisma.user.upsert({
+    where: { email: SEED_EMAIL },
+    update: {},
+    create: {
+      email: SEED_EMAIL,
+      name: "Demo",
+      passwordHash: await bcrypt.hash(SEED_PASSWORD, 12),
+      role: "ADMIN",
+    },
+  });
+  const userId = user.id;
+  const mine = { userId };
+
+  // Scoped to the demo account — see the note at the top of this file.
+  await prisma.soldComp.deleteMany({ where: { search: mine } });
+  await prisma.compSearch.deleteMany({ where: mine });
+  await prisma.sale.deleteMany({ where: mine });
+  await prisma.expense.deleteMany({ where: mine });
+  await prisma.purchase.deleteMany({ where: mine });
+  await prisma.item.deleteMany({ where: mine });
 
   // Bought in yen on Yahoo Auctions, graded, sold in dollars on eBay via an
   // accepted Best Offer — the whole cross-currency path in one item.
   const charizard = await prisma.item.create({
     data: {
+      userId,
       type: "CARD",
       title: "Charizard",
       setName: "Base Set",
@@ -49,6 +75,7 @@ async function main() {
       language: "Japanese",
       compQuery: "charizard base set japanese",
       purchases: { create: [{
+      userId,
       grader: "PSA",
       grade: "8",
       certNumber: "12345678",
@@ -63,6 +90,7 @@ async function main() {
       expenses: {
         create: [
           {
+            userId,
             category: "GRADING",
             description: "PSA Value submission",
             incurredAt: daysAgo(100),
@@ -73,6 +101,7 @@ async function main() {
             vendor: "PSA",
           },
           {
+            userId,
             category: "SHIPPING_IN",
             description: "Domestic shipping to forwarder",
             incurredAt: daysAgo(100),
@@ -85,6 +114,7 @@ async function main() {
       },
       sales: {
         create: {
+          userId,
           soldAt: daysAgo(20),
           platform: "EBAY",
           currency: "USD",
@@ -109,6 +139,7 @@ async function main() {
   // A raw manga volume bought in yen on PayPay Flea, still held.
   await prisma.item.create({
     data: {
+      userId,
       type: "MANGA",
       title: "Chainsaw Man Vol. 1",
       setName: "Chainsaw Man",
@@ -117,6 +148,7 @@ async function main() {
       language: "Japanese",
       compQuery: "chainsaw man vol 1 first print",
       purchases: { create: [{
+      userId,
       grader: "RAW",
       condition: "Like New",
       acquiredAt: daysAgo(45),
@@ -129,6 +161,7 @@ async function main() {
       status: "OWNED",
       expenses: {
         create: {
+          userId,
           category: "SUPPLIES",
           description: "Mylar sleeve",
           incurredAt: daysAgo(44),
@@ -142,6 +175,7 @@ async function main() {
       // A second copy of the same volume, bought later and graded — this is
       // what the purchase rows exist for.
       {
+        userId,
         grader: "CGC",
         grade: "9.8",
         acquiredAt: daysAgo(20),
@@ -159,11 +193,13 @@ async function main() {
   // A SNKRDUNK purchase sold at a loss, to exercise the negative path.
   await prisma.item.create({
     data: {
+      userId,
       type: "MANGA",
       title: "One Piece Vol. 1",
       setName: "One Piece",
       number: "1",
       purchases: { create: [{
+      userId,
       grader: "CGC",
       grade: "9.8",
       acquiredAt: daysAgo(80),
@@ -176,6 +212,7 @@ async function main() {
       status: "SOLD",
       sales: {
         create: {
+          userId,
           soldAt: daysAgo(5),
           platform: "EBAY",
           currency: "USD",
@@ -199,6 +236,7 @@ async function main() {
   await prisma.expense.createMany({
     data: [
       {
+        userId,
         category: "SUPPLIES",
         description: "Bubble mailers (100 ct)",
         incurredAt: daysAgo(30),
@@ -209,6 +247,7 @@ async function main() {
         vendor: "Uline",
       },
       {
+        userId,
         category: "SUBSCRIPTION",
         description: "eBay store subscription",
         incurredAt: daysAgo(15),
@@ -218,6 +257,7 @@ async function main() {
         amountJpyYen: usd(21.95, RATE.overhead).jpyYen,
       },
       {
+        userId,
         category: "TRAVEL",
         description: "Card show admission + train",
         incurredAt: daysAgo(60),
@@ -229,7 +269,7 @@ async function main() {
     ],
   });
 
-  console.log(`Seeded. Charizard item id: ${charizard.id}`);
+  console.log(`Seeded ${SEED_EMAIL}. Charizard item id: ${charizard.id}`);
 }
 
 main()

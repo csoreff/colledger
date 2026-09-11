@@ -4,25 +4,31 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && prisma migrate deploy && next build",
     "start": "next start",
     "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "prisma generate",
     "seed": "tsx prisma/seed.ts",
+    "users": "tsx scripts/users.ts",
     "fx:audit": "tsx scripts/repair-fx.ts",
     "fx:repair": "tsx scripts/repair-fx.ts --apply"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "bcryptjs": "^2.4.3",
     "cheerio": "^1.2.0",
     "date-fns": "^4.4.0",
     "lucide-react": "^1.31.0",
     "next": "14.2.15",
+    "next-auth": "^4.24.15",
     "prisma": "^5.22.0",
     "react": "^18",
     "react-dom": "^18",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",

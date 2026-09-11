@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { requireUser } from "@/lib/tenant";
 import { deleteExpense } from "@/lib/actions";
 import type { Money } from "@/lib/currency";
 import { PageHeader, StatCard } from "@/components/ui";
@@ -16,14 +17,17 @@ export default async function ExpensesPage({
 }: {
   searchParams: SearchParams;
 }) {
+  const user = await requireUser();
+
   const scope = searchParams.scope === "item" ? "item" : searchParams.scope === "all" ? "all" : "general";
 
+  const mine = { userId: user.id };
   const where =
     scope === "general"
-      ? { purchaseId: null }
+      ? { ...mine, purchaseId: null }
       : scope === "item"
-        ? { NOT: { purchaseId: null } }
-        : {};
+        ? { ...mine, NOT: { purchaseId: null } }
+        : mine;
 
   const [expenses, generalAgg, itemAgg] = await Promise.all([
     prisma.expense.findMany({
@@ -42,11 +46,11 @@ export default async function ExpensesPage({
       },
     }),
     prisma.expense.aggregate({
-      where: { purchaseId: null },
+      where: { ...mine, purchaseId: null },
       _sum: { amountUsdCents: true, amountJpyYen: true },
     }),
     prisma.expense.aggregate({
-      where: { NOT: { purchaseId: null } },
+      where: { ...mine, NOT: { purchaseId: null } },
       _sum: { amountUsdCents: true, amountJpyYen: true },
     }),
   ]);

@@ -3,20 +3,96 @@
 Tracks trading card and manga purchases, sales, expenses and profit, plus a
 sold-comp lookup for pricing things up.
 
-Next.js 14 · TypeScript · Tailwind · Prisma 5.22 · PostgreSQL. Single user, no login.
+Next.js 14 · TypeScript · Tailwind · Prisma 5.22 · PostgreSQL · NextAuth.
+Multi-user: each account has its own private ledger, and there is a REST API
+for pushing data in or querying it from elsewhere.
 
 ## Running it
 
 ```bash
 npm install
+cp .env.example .env        # then fill in DATABASE_URL and NEXTAUTH_SECRET
 npx prisma migrate deploy   # or `migrate dev` when changing the schema
-npm run seed                # optional sample data; wipes existing rows
 npm run dev                 # http://localhost:3000
 ```
 
-`DATABASE_URL` lives in `.env` and points at the local Postgres database
-`collectors_ledger`. `npm run seed` resets the tables to a small sample set —
-run it once to look around, then wipe it and enter your own.
+Register at `/register`. **The first account created becomes an admin** — only
+an admin can mint API keys that reach other accounts. Set `ALLOW_SIGNUP=false`
+afterwards to close registration.
+
+`npm run seed` creates a demo account with sample data. It only ever touches
+that account's rows, so it is safe to run against a database holding real
+ledgers.
+
+### Accounts
+
+Some things shouldn't go through a web form. `npm run users` handles them:
+
+```bash
+npm run users -- list
+npm run users -- create --email me@example.com --password '…' --admin
+npm run users -- password --email me@example.com --password '…'   # reset
+npm run users -- role --email me@example.com --role ADMIN
+```
+
+### Upgrading a pre-login database
+
+The multi-user migration parks every row that already existed on a placeholder
+account, rather than dropping it. Claim it with:
+
+```bash
+npm run users -- claim --email me@example.com --password '…'
+```
+
+If that email is new, the placeholder is simply renamed to you and no rows
+move. If you have already registered, the rows are transferred to that account
+instead.
+
+## Deploying
+
+Built for Vercel plus a hosted Postgres (Neon, Supabase, Vercel Postgres), but
+nothing is host-specific.
+
+1. Create the database and set both connection strings. `DATABASE_URL` should
+   be the **pooled** one — a serverless function per request will otherwise
+   exhaust Postgres's connection limit — and `DIRECT_URL` the unpooled one,
+   which is what `prisma migrate` uses, since poolers can't run DDL.
+2. Set `NEXTAUTH_SECRET` (`openssl rand -base64 32`). Changing it later signs
+   everyone out.
+3. Deploy. `npm run build` runs `prisma migrate deploy` before `next build`, so
+   schema changes ship with the code that needs them.
+4. Register the first account, then set `ALLOW_SIGNUP=false` and redeploy.
+
+Sessions are JWTs rather than database rows: no session lookup per request, and
+the Edge middleware can check them without a Prisma client, which it can't
+load.
+
+## The API
+
+Key-authenticated REST at `/api/v1` — seed a ledger, update it, or query it
+remotely. Keys are minted at **Settings**, carry `READ` / `WRITE` / `ADMIN_ALL`
+scopes, and are stored only as a SHA-256 hash.
+
+```bash
+curl -H "Authorization: Bearer cl_…" https://your-app.vercel.app/api/v1/stats
+```
+
+Writes are idempotent when you supply your own `externalRef`, so a sync job can
+re-push the same file without duplicating rows. An `ADMIN_ALL` key can act on
+any account with `X-Ledger-User: someone@example.com`.
+
+Full reference, including the money format and the bulk `/import` endpoint:
+**[docs/API.md](docs/API.md)**.
+
+## How accounts stay separate
+
+Every ledger row carries `userId` directly rather than reaching it through a
+parent relation. That denormalization is the whole safety story: a tenant
+filter is always one column away, so reads are `where: { userId }` and writes
+that target a single row are `where: { id, userId }` via `updateMany` /
+`deleteMany` — never `update({ where: { id } })`, which would happily modify
+someone else's row if an id were guessed. `src/lib/tenant.ts` is the only place
+that decides who the current user is.
 
 ## What it tracks
 
@@ -235,9 +311,16 @@ src/lib/currency.ts         the USD/JPY Money pair: conversion, parsing, formatt
 src/lib/fx.ts               historical rate lookup + caching + fallbacks
 src/lib/comps/              provider interface, eBay API client, caching, stats
 src/lib/actions.ts          server actions (create/update/delete)
+src/lib/auth.ts             NextAuth credentials config, password hashing
+src/lib/tenant.ts           who the request is acting as; the tenancy rules
+src/lib/api/                API keys, the request gate, payload → column mapping
+src/middleware.ts           turns anonymous traffic away at the edge
 src/components/PurchaseRows.tsx  the repeatable purchase-row editor
 src/components/PurchaseCard.tsx  one expandable row on the item page
-src/app/                    dashboard, items, expenses, comps
+src/app/                    dashboard, items, expenses, comps, settings
+src/app/api/v1/             the REST API
+scripts/users.ts            account CLI: create, reset, claim the legacy ledger
+docs/API.md                 API reference
 ```
 
 ## Verified

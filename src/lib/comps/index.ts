@@ -75,8 +75,13 @@ export type RunSearchOptions = {
  *
  * Manually-corrected prices live on the SoldComp rows, so a refresh must not
  * blindly wipe them: we carry the manual price across by externalId.
+ *
+ * The cache is per user. Two accounts researching the same card each get their
+ * own row, because a search carries hand-entered comps and hand-corrected Best
+ * Offer prices that belong to whoever did that research.
  */
 export async function runCompSearch(
+  userId: string,
   query: CompQuery,
   options: RunSearchOptions = {},
 ): Promise<{ searchId: string; warning: string | null; fromCache: boolean }> {
@@ -84,7 +89,7 @@ export async function runCompSearch(
   const cacheKey = buildCacheKey(query, provider.id);
 
   const existing = await prisma.compSearch.findUnique({
-    where: { cacheKey },
+    where: { userId_cacheKey: { userId, cacheKey } },
     include: { comps: true },
   });
 
@@ -132,8 +137,9 @@ export async function runCompSearch(
   }
 
   const search = await prisma.compSearch.upsert({
-    where: { cacheKey },
+    where: { userId_cacheKey: { userId, cacheKey } },
     create: {
+      userId,
       cacheKey,
       query: query.query.trim(),
       itemType: query.itemType ?? null,
