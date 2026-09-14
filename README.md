@@ -84,6 +84,27 @@ any account with `X-Ledger-User: someone@example.com`.
 Full reference, including the money format and the bulk `/import` endpoint:
 **[docs/API.md](docs/API.md)**.
 
+## Public collection pages
+
+Each account can publish a read-only view of its collection at
+`/showcase/<slug>`, readable without signing in. It is **off by default** and
+turned on per user in Settings.
+
+It shows held copies only — `OWNED` and `LISTED`; anything sold, returned or
+lost is excluded at the database level — and describes the cards themselves:
+title, set, number, variant, language, image, grading company, grade, cert
+number and how many are held. It never shows what anything cost, what it sold
+for, expenses, profit, acquisition dates, marketplaces, private notes, or the
+owner's email.
+
+That guarantee lives in `src/lib/showcase.ts`, which is the only code path in
+the app that returns ledger data to an unauthenticated request. It queries an
+explicit column allowlist rather than `include`, and builds its result field by
+field rather than spreading a Prisma row, so a column added to the schema later
+cannot start appearing on a public page by default. A disabled slug and an
+unknown slug both 404 identically, so the URL space can't be probed to find out
+which accounts exist.
+
 ## How accounts stay separate
 
 Every ledger row carries `userId` directly rather than reaching it through a

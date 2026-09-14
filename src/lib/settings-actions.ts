@@ -6,6 +6,7 @@ import type { ApiScope } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/tenant";
 import { createApiKeyFor } from "@/lib/api/keys";
+import { generateSlug, normalizeSlug, validateSlug } from "@/lib/showcase";
 import { hashPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth";
 import bcrypt from "bcryptjs";
 import type { ActionState } from "@/lib/actions";
@@ -73,6 +74,73 @@ export async function deleteApiKey(keyId: string): Promise<void> {
   const user = await requireUser();
   await prisma.apiKey.deleteMany({ where: { id: keyId, userId: user.id } });
   revalidatePath("/settings");
+}
+
+// ---------------------------------------------------------------------------
+// Public showcase
+// ---------------------------------------------------------------------------
+
+export type ShowcaseState = ActionState & { slug?: string; enabled?: boolean };
+
+/**
+ * Turns the public collection page on or off, and sets its address.
+ *
+ * Enabling without a slug mints one. Disabling keeps the slug on the account
+ * rather than clearing it, so turning the page back on later restores the same
+ * URL instead of silently publishing a new one — and so nobody else can claim
+ * the address you have already shared while yours is switched off.
+ */
+export async function updateShowcase(
+  _prev: ShowcaseState,
+  form: FormData,
+): Promise<ShowcaseState> {
+  const user = await requireUser();
+
+  // An unchecked checkbox submits nothing at all, which is what makes "off"
+  // the safe default here: a malformed post turns the page off, never on.
+  const enabled = form.get("publicShowcase") === "on";
+
+  const current = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { publicSlug: true, name: true },
+  });
+
+  const typed = normalizeSlug(String(form.get("publicSlug") ?? ""));
+  let slug = current?.publicSlug ?? null;
+
+  if (typed) {
+    const problem = validateSlug(typed);
+    if (problem) return { error: problem, enabled };
+
+    if (typed !== current?.publicSlug) {
+      const taken = await prisma.user.findUnique({
+        where: { publicSlug: typed },
+        select: { id: true },
+      });
+      if (taken && taken.id !== user.id) {
+        return { error: "That address is already taken. Try another.", enabled };
+      }
+    }
+    slug = typed;
+  }
+
+  // Turning it on for the first time with nothing typed: invent an address.
+  if (enabled && !slug) slug = await generateSlug(current?.name ?? null);
+
+  try {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { publicShowcase: enabled, publicSlug: slug },
+    });
+  } catch {
+    // Two accounts racing for the same slug; the unique index caught what the
+    // check above raced past.
+    return { error: "That address was just taken. Try another.", enabled };
+  }
+
+  revalidatePath("/settings");
+  if (slug) revalidatePath(`/showcase/${slug}`);
+  return { ok: true, slug: slug ?? undefined, enabled };
 }
 
 const passwordSchema = z.object({

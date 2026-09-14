@@ -20,8 +20,11 @@ export const config = {
      *   api/auth  — sign-in itself
      *   api/v1    — the REST API, which authenticates with its own API keys
      *   login, register — reachable while signed out
+     *   showcase  — opt-in public collection pages; the page itself decides
+     *               whether a given slug is published, and serves only the
+     *               allowlisted fields in `src/lib/showcase.ts`
      *   _next, favicon, fonts — static assets
      */
-    "/((?!api/auth|api/v1|login|register|_next/static|_next/image|favicon.ico|fonts).*)",
+    "/((?!api/auth|api/v1|login|register|showcase|_next/static|_next/image|favicon.ico|fonts).*)",
   ],
 };

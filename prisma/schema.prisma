@@ -128,6 +128,17 @@ model User {
   /// Set false to keep an account on file but block sign-in and API use.
   isActive Boolean @default(true)
 
+  /// Opt-in public collection page at /showcase/<publicSlug>.
+  ///
+  /// Defaults to false, and every existing account is backfilled to false, so
+  /// enabling a showcase is always a deliberate act. It is the only way any
+  /// data in this database becomes readable without authentication; what that
+  /// page may show is fixed by an allowlist in `src/lib/showcase.ts`.
+  publicShowcase Boolean @default(false)
+  /// The name in the public URL. Unique across accounts, and deliberately not
+  /// derived from the email — the page should not hand out an address.
+  publicSlug String? @unique
+
   items        Item[]
   purchases    Purchase[]
   expenses     Expense[]

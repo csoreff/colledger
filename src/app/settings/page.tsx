@@ -1,13 +1,27 @@
 import Link from "next/link";
+import { headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/tenant";
 import { Chip, PageHeader } from "@/components/ui";
 import { ApiKeyManager, ChangePasswordForm } from "@/components/ApiKeys";
+import { ShowcaseSettings } from "@/components/ShowcaseSettings";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const user = await requireUser();
+
+  const account = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { publicShowcase: true, publicSlug: true },
+  });
+
+  // The showcase URL has to be absolute to be shareable, and the host is only
+  // knowable at request time — a hardcoded origin would be wrong on every
+  // preview deployment.
+  const host = headers().get("host") ?? "localhost:3000";
+  const protocol = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
+  const origin = `${protocol}://${host}`;
 
   const keys = await prisma.apiKey.findMany({
     where: { userId: user.id },
@@ -31,6 +45,20 @@ export default async function SettingsPage() {
         subtitle={user.email}
         action={user.role === "ADMIN" ? <Chip tone="amber">Admin</Chip> : undefined}
       />
+
+      <section className="card mb-6">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">
+          Public collection
+        </h2>
+        <p className="mb-4 text-sm text-slate-500">
+          Share what you own without sharing what it cost you.
+        </p>
+        <ShowcaseSettings
+          enabled={account?.publicShowcase ?? false}
+          slug={account?.publicSlug ?? null}
+          origin={origin}
+        />
+      </section>
 
       <ApiKeyManager keys={keys} role={user.role} />
 
