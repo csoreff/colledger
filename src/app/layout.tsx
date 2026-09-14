@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { Nav } from "@/components/Nav";
+import { PublicNav } from "@/components/PublicNav";
 import { getCurrentUser, getDisplayName } from "@/lib/tenant";
 import "./globals.css";
 
@@ -12,8 +13,9 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // Read here rather than inside Nav so the login and register pages, which
-  // share this layout, render without a navigation bar they can't use.
+  // Read here rather than inside Nav so the signed-out header can be a
+  // different component entirely, rather than Nav rendering a hollow version of
+  // itself with every link removed.
   const user = await getCurrentUser();
 
   // The name comes from the database, not the session: the JWT holds whatever
@@ -24,7 +26,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
       <body className={inter.className}>
-        {user ? <Nav user={user} displayName={displayName} /> : null}
+        {/* Both sit outside <main> so the bar spans the full width. PublicNav
+            hides itself on the login and register pages. */}
+        {user ? (
+          <Nav user={user} displayName={displayName} />
+        ) : (
+          <PublicNav />
+        )}
         <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
           {children}
         </main>
