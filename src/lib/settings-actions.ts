@@ -77,6 +77,58 @@ export async function deleteApiKey(keyId: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------------
+
+/** How long a display name may be. Long enough for a real name, short enough
+ *  not to break the nav bar or a showcase heading. */
+const MAX_NAME_LENGTH = 60;
+
+/**
+ * Changes the display name.
+ *
+ * This is the name shown in the nav and used as the heading of a public
+ * showcase, so it is allowed to be empty: clearing it falls back to the email
+ * in the nav (private) and to the slug on the showcase (public), which is the
+ * right behaviour for someone who wants a public page without a real name on
+ * it.
+ */
+export async function updateProfile(
+  _prev: ActionState,
+  form: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const raw = String(form.get("name") ?? "").trim();
+  if (raw.length > MAX_NAME_LENGTH) {
+    return { error: `Keep it to ${MAX_NAME_LENGTH} characters or fewer.` };
+  }
+  // Collapse internal whitespace so a name can't be padded out to look like
+  // several, and strip control characters that would corrupt the heading.
+  // eslint-disable-next-line no-control-regex
+  const name = raw
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { name: name || null },
+  });
+
+  revalidatePath("/settings");
+  // The nav reads this name, and so does any showcase page the user publishes.
+  revalidatePath("/", "layout");
+
+  const slug = (
+    await prisma.user.findUnique({ where: { id: user.id }, select: { publicSlug: true } })
+  )?.publicSlug;
+  if (slug) revalidatePath(`/showcase/${slug}`);
+
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
 // Public showcase
 // ---------------------------------------------------------------------------
 

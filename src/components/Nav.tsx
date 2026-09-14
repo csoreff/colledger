@@ -14,7 +14,14 @@ const LINKS = [
   { href: "/settings", label: "Settings", icon: Settings, exact: false },
 ];
 
-export function Nav({ user }: { user: CurrentUser }) {
+export function Nav({
+  user,
+  displayName,
+}: {
+  user: CurrentUser;
+  /** Current name from the database; the session's copy can be stale. */
+  displayName: string | null;
+}) {
   const pathname = usePathname();
 
   return (
@@ -44,7 +51,7 @@ export function Nav({ user }: { user: CurrentUser }) {
           })}
 
           <span className="ml-2 hidden text-xs text-slate-500 lg:inline" title={user.email}>
-            {user.name || user.email}
+            {displayName || user.email}
           </span>
           <SignOutButton />
         </nav>

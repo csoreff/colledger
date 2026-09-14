@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/tenant";
 import { Chip, PageHeader } from "@/components/ui";
 import { ApiKeyManager, ChangePasswordForm } from "@/components/ApiKeys";
 import { ShowcaseSettings } from "@/components/ShowcaseSettings";
+import { ProfileSettings } from "@/components/ProfileSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,7 @@ export default async function SettingsPage() {
 
   const account = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { publicShowcase: true, publicSlug: true },
+    select: { name: true, email: true, publicShowcase: true, publicSlug: true },
   });
 
   // The showcase URL has to be absolute to be shareable, and the host is only
@@ -45,6 +46,20 @@ export default async function SettingsPage() {
         subtitle={user.email}
         action={user.role === "ADMIN" ? <Chip tone="amber">Admin</Chip> : undefined}
       />
+
+      <section className="card mb-6">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">
+          Profile
+        </h2>
+        <p className="mb-4 text-sm text-slate-500">
+          How you&apos;re identified in the app.
+        </p>
+        <ProfileSettings
+          name={account?.name ?? null}
+          email={account?.email ?? user.email}
+          showcaseSlug={account?.publicShowcase ? account.publicSlug : null}
+        />
+      </section>
 
       <section className="card mb-6">
         <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-400">

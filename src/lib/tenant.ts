@@ -13,6 +13,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import type { UserRole } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 export type CurrentUser = {
   id: string;
@@ -49,4 +50,21 @@ export async function requireUser(): Promise<CurrentUser> {
 /** True when this user may act on other people's ledgers. */
 export function isAdmin(user: { role: UserRole }): boolean {
   return user.role === "ADMIN";
+}
+
+/**
+ * The display name as it is *right now*, from the database.
+ *
+ * The session is a JWT, so `session.user.name` is a snapshot taken at sign-in
+ * and does not change when the name does. Anything long-lived enough to show a
+ * name — the nav, on every page — has to read it rather than trust the token,
+ * otherwise renaming yourself in Settings appears to do nothing until the next
+ * sign-in. One primary-key lookup.
+ */
+export async function getDisplayName(userId: string): Promise<string | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true },
+  });
+  return user?.name?.trim() || null;
 }
