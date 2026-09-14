@@ -28,7 +28,8 @@ export function Nav({
     <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
         <Link href="/" className="text-lg font-semibold tracking-tight">
-          <span className="text-emerald-400">Collectors</span> Ledger
+          {/* Two-tone on the portmanteau's seam: "Col" + "ledger". */}
+          <span className="text-emerald-400">Col</span>ledger
         </Link>
 
         <nav className="flex flex-wrap items-center gap-1">

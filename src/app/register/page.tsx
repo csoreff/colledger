@@ -12,7 +12,7 @@ export default async function RegisterPage() {
   return (
     <div className="mx-auto max-w-sm py-10">
       <h1 className="text-center text-2xl font-semibold tracking-tight">
-        <span className="text-emerald-400">Collectors</span> Ledger
+        <span className="text-emerald-400">Col</span>ledger
       </h1>
       <p className="mb-6 mt-1 text-center text-sm text-slate-400">
         Create an account. Your collection, costs and profit stay yours alone.
